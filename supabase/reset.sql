@@ -43,3 +43,7 @@ drop type if exists order_state     cascade;
 drop type if exists reply_sentiment cascade;
 drop type if exists touch_kind      cascade;
 drop type if exists channel         cascade;
+
+-- Note: 0003_revoke_anon.sql alters role grants, not objects, so it leaves
+-- nothing for this script to drop. Re-running it after a reset is harmless
+-- and still necessary.
