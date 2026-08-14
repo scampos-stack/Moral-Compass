@@ -2,8 +2,25 @@
 
 import { revalidatePath } from 'next/cache'
 import { createReadClient } from '@/lib/supabase/read'
+import { isUnlocked, unlock, lock } from '@/lib/edit-gate'
 
 export type EntryState = { ok: boolean; message: string } | null
+
+/** Exchanges the passcode for an edit cookie. */
+export async function submitPasscode(
+  _prev: EntryState,
+  formData: FormData
+): Promise<EntryState> {
+  const ok = await unlock(String(formData.get('passcode') ?? ''))
+  if (!ok) return { ok: false, message: 'Wrong code.' }
+  revalidatePath('/linkedin')
+  return { ok: true, message: 'Unlocked.' }
+}
+
+export async function lockEditing(): Promise<void> {
+  await lock()
+  revalidatePath('/linkedin')
+}
 
 function toInt(value: FormDataEntryValue | null): number {
   const n = Number(value)
@@ -19,6 +36,12 @@ export async function saveLinkedInDay(
   _prev: EntryState,
   formData: FormData
 ): Promise<EntryState> {
+  // Checked here, in the action, not just by hiding the form. A hidden form
+  // stops nobody who can post to the endpoint directly.
+  if (!(await isUnlocked())) {
+    return { ok: false, message: 'Enter the edit code first.' }
+  }
+
   const activityDate = String(formData.get('activity_date') ?? '')
   if (!activityDate) {
     return { ok: false, message: 'Pick a date.' }

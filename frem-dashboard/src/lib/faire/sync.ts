@@ -148,6 +148,12 @@ export async function syncFaireOrders(opts: {
             commission_rate: (pc?.commission_bps ?? 0) / 10000,
             commission_paid: minorToDecimal(pc?.commission),
             net_payout: minorToDecimal(pc?.total_payout),
+            // Faire's own attribution. Manually applied, so null means
+            // "not tagged" rather than "not ours".
+            sales_rep_name: o.sales_rep_name?.trim() || null,
+            discount_codes: (o.brand_discounts ?? [])
+              .map((d) => d.code?.trim())
+              .filter((c): c is string => Boolean(c)),
           },
         ]
       })

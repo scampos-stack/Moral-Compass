@@ -1,5 +1,7 @@
 import { createReadClient } from '@/lib/supabase/read'
+import { isUnlocked } from '@/lib/edit-gate'
 import { EntryForm } from './entry-form'
+import { PasscodeForm, LockButton } from './passcode-form'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,19 +32,22 @@ export default async function LinkedInPage() {
 
   const rows = (data ?? []) as Row[]
   const today = new Date().toISOString().slice(0, 10)
+  const unlocked = await isUnlocked()
 
   return (
     <main className="mx-auto max-w-4xl space-y-12 p-8">
-      <header className="space-y-1">
-        <p className="wordmark text-sm">Frém</p>
-        <h1 className="text-3xl">LinkedIn — daily entry</h1>
-        <p className="text-sm text-muted">
-          LinkedIn has no API for outreach activity, so this is keyed by hand.
-          Saving a date you have already entered overwrites it.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl">LinkedIn — daily entry</h1>
+          <p className="text-sm text-muted">
+            LinkedIn has no API for outreach activity, so this is keyed by hand.
+            Saving a date you have already entered overwrites it.
+          </p>
+        </div>
+        {unlocked && <LockButton />}
       </header>
 
-      <EntryForm today={today} />
+      {unlocked ? <EntryForm today={today} /> : <PasscodeForm />}
 
       <section className="space-y-4">
         <h2 className="text-xs uppercase tracking-wider text-muted">

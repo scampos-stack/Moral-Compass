@@ -31,6 +31,12 @@ export type FaireAddress = {
   country_code?: string
 }
 
+export type FaireBrandDiscount = {
+  code?: string
+  discount_percentage?: number
+  discount_type?: string
+}
+
 export type FaireOrder = {
   id: string
   display_id: string
@@ -39,6 +45,10 @@ export type FaireOrder = {
   state: string
   source: string
   retailer_id: string
+  /** Rep credited on the order. "ATW" = A-Teamwork. Tagged by hand in Faire. */
+  sales_rep_name?: string | null
+  /** Promo codes applied; how a Faire campaign is identified. */
+  brand_discounts?: FaireBrandDiscount[]
   address?: FaireAddress
   customer?: { first_name?: string; last_name?: string }
   payout_costs?: FairePayoutCosts

@@ -1,308 +1,523 @@
-import Link from 'next/link'
 import { createReadClient } from '@/lib/supabase/read'
-import { Stat, Bar, Empty } from '@/components/stat'
-import {
-  RangeFilter,
-  parseRange,
-  rangeStart,
-  RANGES,
-} from '@/components/range-filter'
+import { Stat, Empty } from '@/components/stat'
 
 export const dynamic = 'force-dynamic'
 
-const CHANNEL_LABEL: Record<string, string> = {
-  woodpecker_email: 'Email (Woodpecker)',
-  faire_campaign: 'Faire campaigns',
-  manual_email: 'Manual follow-ups',
+const SOURCE_LABEL: Record<string, string> = {
+  woodpecker_email: 'Email marketing (Woodpecker)',
   linkedin: 'LinkedIn',
+  manual_email: 'Manual follow-ups',
+  faire_campaign: 'Faire campaigns',
 }
 
 const money = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const money0 = (n: number) =>
   n.toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
   })
-
 const num = (n: number) => n.toLocaleString('en-US')
+const pct = (n: number | null) => (n === null ? '—' : `${n.toFixed(2)}%`)
 
-export default async function Dashboard({
-  searchParams,
-}: {
-  searchParams: Promise<{ range?: string }>
-}) {
-  const range = parseRange((await searchParams).range)
-  const since = rangeStart(range)
+type Perf = {
+  channel: string
+  sent: number
+  replies: number
+  opened: number
+  interested: number
+  reply_rate_pct: number | null
+  closed: number
+  revenue: number
+}
+
+export default async function Overview() {
   const supabase = createReadClient()
 
-  // Effort inside the window, from every channel.
-  let effortQuery = supabase
-    .from('v_outreach_daily_all')
-    .select('activity_date, channel, sent, replies')
-  if (since) effortQuery = effortQuery.gte('activity_date', since.slice(0, 10))
-
-  let ordersQuery = supabase
-    .from('orders')
-    .select(
-      'display_id, amount, commission_paid, net_payout, placed_at, sales_channel, retailers(name)'
-    )
-    .neq('state', 'cancelled')
-    .order('placed_at', { ascending: false })
-  if (since) ordersQuery = ordersQuery.gte('placed_at', since)
-
-  const [effortRes, ordersRes] = await Promise.all([
-    effortQuery,
-    ordersQuery.limit(500),
+  const [perfRes, migRes, ordersRes, wpRes, atwRes, fcRes] = await Promise.all([
+    supabase.from('v_channel_performance').select('*'),
+    supabase.from('v_migration_rate').select('*').limit(12),
+    supabase
+      .from('orders')
+      .select('amount, commission_paid, net_payout, placed_at, sales_channel')
+      .neq('state', 'cancelled'),
+    supabase
+      .from('woodpecker_campaigns')
+      .select('name, status, prospects, sent, opened, replied, interested, bounced')
+      .order('sent', { ascending: false }),
+    supabase.from('v_atw_revenue').select('*').limit(12),
+    supabase.from('v_faire_campaigns').select('*').limit(15),
   ])
 
-  const effortRows = (effortRes.data ?? []) as Array<{
-    activity_date: string
-    channel: string
-    sent: number
-    replies: number
-  }>
+  const perf = ((perfRes.data ?? []) as Perf[]).map((p) => ({
+    ...p,
+    sent: Number(p.sent ?? 0),
+    replies: Number(p.replies ?? 0),
+    opened: Number(p.opened ?? 0),
+    interested: Number(p.interested ?? 0),
+    closed: Number(p.closed ?? 0),
+    revenue: Number(p.revenue ?? 0),
+  }))
 
   const orders = (ordersRes.data ?? []).map((o) => ({
-    display_id: o.display_id as string | null,
     amount: Number(o.amount),
     commission: Number(o.commission_paid ?? 0),
     payout: Number(o.net_payout ?? 0),
     placed_at: o.placed_at as string,
     channel: o.sales_channel as string,
-    // PostgREST types a to-one embed as an array.
-    retailer:
-      (Array.isArray(o.retailers) ? o.retailers[0]?.name : undefined) ?? null,
   }))
 
-  // Effort per channel.
-  const effort = new Map<string, { sent: number; replies: number }>()
-  for (const r of effortRows) {
-    const e = effort.get(r.channel) ?? { sent: 0, replies: 0 }
-    e.sent += Number(r.sent ?? 0)
-    e.replies += Number(r.replies ?? 0)
-    effort.set(r.channel, e)
-  }
+  const migration = (migRes.data ?? []) as Array<{
+    month: string
+    total_revenue: number
+    direct_revenue: number
+    revenue_migration_pct: number | null
+    total_buyers: number
+    buyer_migration_pct: number | null
+    commission_paid: number
+  }>
 
+  const campaigns = (wpRes.data ?? []) as Array<{
+    name: string
+    status: string | null
+    prospects: number
+    sent: number
+    opened: number
+    replied: number
+    interested: number
+    bounced: number
+  }>
+
+  const atw = (atwRes.data ?? []) as Array<{
+    month: string
+    atw_orders: number
+    atw_revenue: number
+    atw_commission: number
+    untagged_orders: number
+    untagged_revenue: number
+    total_revenue: number
+    atw_share_pct: number | null
+  }>
+
+  const faireCampaigns = (fcRes.data ?? []) as Array<{
+    code: string
+    orders: number
+    buyers: number
+    revenue: number
+    atw_orders: number
+    last_order: string
+  }>
+
+  const atwTotal = atw.reduce((s, m) => s + Number(m.atw_revenue), 0)
+  const atwOrders = atw.reduce((s, m) => s + Number(m.atw_orders), 0)
+
+  // ── Revenue, all-time, straight from synced Faire orders ────────────────
   const revenue = orders.reduce((s, o) => s + o.amount, 0)
   const commission = orders.reduce((s, o) => s + o.commission, 0)
-  const totalSent = [...effort.values()].reduce((s, e) => s + e.sent, 0)
-  const totalReplies = [...effort.values()].reduce((s, e) => s + e.replies, 0)
-
+  const payout = orders.reduce((s, o) => s + o.payout, 0)
   const directRevenue = orders
     .filter((o) => o.channel !== 'faire_marketplace')
     .reduce((s, o) => s + o.amount, 0)
   const migrationPct = revenue > 0 ? (100 * directRevenue) / revenue : null
 
-  const buyers = new Set(orders.map((o) => o.retailer).filter(Boolean))
-  const avgOrder = orders.length > 0 ? revenue / orders.length : 0
+  const last30 = (() => {
+    const cut = new Date()
+    cut.setUTCDate(cut.getUTCDate() - 30)
+    const iso = cut.toISOString()
+    const recent = orders.filter((o) => o.placed_at >= iso)
+    return { count: recent.length, value: recent.reduce((s, o) => s + o.amount, 0) }
+  })()
 
-  const channels = [...effort.entries()]
-    .map(([channel, e]) => ({
-      channel,
-      ...e,
-      rate: e.sent > 0 ? (100 * e.replies) / e.sent : null,
-    }))
-    .filter((c) => c.sent > 0 || c.replies > 0)
+  const totals = perf.reduce(
+    (a, p) => ({
+      sent: a.sent + p.sent,
+      replies: a.replies + p.replies,
+      closed: a.closed + p.closed,
+      revenue: a.revenue + p.revenue,
+    }),
+    { sent: 0, replies: 0, closed: 0, revenue: 0 }
+  )
+  const totalRate = totals.sent > 0 ? (100 * totals.replies) / totals.sent : null
 
-  const byVolume = [...channels].sort((a, b) => b.sent - a.sent)
-  const maxSent = Math.max(...byVolume.map((c) => c.sent), 0)
-
-  const byRate = [...channels]
-    .filter((c) => c.rate !== null)
-    .sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0))
-  const maxRate = Math.max(...byRate.map((c) => c.rate ?? 0), 0)
-
-  const revByChannel = new Map<string, number>()
-  for (const o of orders) {
-    revByChannel.set(o.channel, (revByChannel.get(o.channel) ?? 0) + o.amount)
-  }
-  const revRows = [...revByChannel.entries()].sort((a, b) => b[1] - a[1])
-  const maxRev = Math.max(...revRows.map(([, v]) => v), 0)
-
-  const label = RANGES[range].label.toLowerCase()
+  const rows = [...perf].sort((a, b) => b.sent - a.sent)
 
   return (
-    <main className="mx-auto max-w-5xl space-y-12 p-8">
-      <header className="space-y-5 border-b border-border pb-5">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="space-y-1">
-            <p className="wordmark text-sm text-muted">Frém</p>
-            <h1 className="text-3xl">Moral Compass</h1>
-          </div>
-          <Link
-            href="/linkedin"
-            className="text-xs uppercase tracking-wider underline underline-offset-4 hover:text-muted"
-          >
-            LinkedIn entry →
-          </Link>
-        </div>
-        <RangeFilter active={range} />
-      </header>
-
-      {orders.length === 0 && totalSent === 0 && (
-        <Empty>
-          Nothing in the last {label}. Try{' '}
-          <Link href="/?range=all" className="underline underline-offset-2">
-            all time
-          </Link>
-          , or run the Faire sync to pull orders.
-        </Empty>
-      )}
-
+    <main className="mx-auto max-w-6xl space-y-12 p-8">
+      {/* ── Headline ──────────────────────────────────────────────────── */}
       <section className="grid grid-cols-2 gap-6 md:grid-cols-4">
-        <Stat label="Revenue" value={money(revenue)} note={`last ${label}`} />
         <Stat
-          label="Commission to Faire"
-          value={money(commission)}
-          note={
-            revenue > 0
-              ? `${((100 * commission) / revenue).toFixed(1)}% of revenue`
-              : 'no orders'
-          }
+          label="Revenue"
+          value={money0(revenue)}
+          note={`${num(orders.length)} orders, all time`}
         />
         <Stat
-          label="Orders"
-          value={num(orders.length)}
-          note={
-            orders.length > 0
-              ? `${money(avgOrder)} average · ${buyers.size} buyers`
-              : 'none yet'
-          }
+          label="You keep"
+          value={money0(payout)}
+          note={`${money0(commission)} to Faire`}
         />
         <Stat
           label="Revenue direct"
           value={migrationPct === null ? '—' : `${migrationPct.toFixed(1)}%`}
           note="off the marketplace"
         />
+        <Stat
+          label="Last 30 days"
+          value={money0(last30.value)}
+          note={`${num(last30.count)} orders`}
+        />
       </section>
 
-      <section className="space-y-4">
+      {/* ── A-Teamwork attributed revenue ─────────────────────────────── */}
+      <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-xs uppercase tracking-wider text-muted">
-            Outreach volume
+            A-Teamwork attributed revenue
           </h2>
           <span className="text-xs text-muted">
-            {num(totalSent)} sent · {num(totalReplies)} replies
+            Faire orders tagged rep &ldquo;ATW&rdquo;
           </span>
         </div>
-        {byVolume.length === 0 ? (
-          <Empty>No outreach recorded in this window.</Empty>
-        ) : (
-          <div>
-            {byVolume.map((c) => (
-              <Bar
-                key={c.channel}
-                label={CHANNEL_LABEL[c.channel] ?? c.channel}
-                value={c.sent}
-                max={maxSent}
-                display={num(c.sent)}
-                sub={`${num(c.replies)} replies`}
-              />
-            ))}
-          </div>
-        )}
-      </section>
 
-      <section className="space-y-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-xs uppercase tracking-wider text-muted">
-            Reply rate
-          </h2>
-          <span className="text-xs text-muted">replies ÷ sent, consistently</span>
-        </div>
-        {byRate.length === 0 ? (
-          <Empty>No reply data in this window.</Empty>
+        {atw.length === 0 ? (
+          <Empty>
+            No ATW-tagged orders yet. Run migration 0006 and re-sync Faire —
+            the tag is in the order payload but was not being stored.
+          </Empty>
         ) : (
-          <div>
-            {byRate.map((c) => (
-              <Bar
-                key={c.channel}
-                label={CHANNEL_LABEL[c.channel] ?? c.channel}
-                value={c.rate ?? 0}
-                max={maxRate}
-                display={`${(c.rate ?? 0).toFixed(2)}%`}
-                sub={`of ${num(c.sent)}`}
+          <>
+            <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
+              <Stat
+                label="Tagged to ATW"
+                value={money0(atwTotal)}
+                note={`${num(atwOrders)} orders`}
               />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-xs uppercase tracking-wider text-muted">
-          Revenue by sales channel
-        </h2>
-        {revRows.length === 0 ? (
-          <Empty>No orders in this window.</Empty>
-        ) : (
-          <div>
-            {revRows.map(([channel, value]) => (
-              <Bar
-                key={channel}
-                label={
-                  channel === 'faire_marketplace'
-                    ? 'Faire marketplace'
-                    : channel === 'faire_direct'
-                      ? 'Faire Direct'
-                      : 'Shopify direct'
+              <Stat
+                label="Share of Faire revenue"
+                value={
+                  revenue > 0 ? `${((100 * atwTotal) / revenue).toFixed(1)}%` : '—'
                 }
-                value={value}
-                max={maxRev}
-                display={money(value)}
-                sub={channel === 'faire_marketplace' ? '15% fee' : '0% fee'}
+                note="of all synced orders"
               />
-            ))}
-          </div>
+              <Stat
+                label="Untagged"
+                value={money0(revenue - atwTotal)}
+                note="may still include our work"
+              />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                    <th className="py-2 pr-4 text-left font-normal">Month</th>
+                    <th className="py-2 pr-4 text-right font-normal">ATW orders</th>
+                    <th className="py-2 pr-4 text-right font-normal">ATW revenue</th>
+                    <th className="py-2 pr-4 text-right font-normal">Share</th>
+                    <th className="py-2 pr-4 text-right font-normal">Untagged</th>
+                    <th className="py-2 text-right font-normal">Month total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {atw.map((m) => (
+                    <tr
+                      key={m.month}
+                      className="border-b border-border transition-colors hover:bg-surface-muted"
+                    >
+                      <td className="numeric py-2 pr-4">{m.month.slice(0, 7)}</td>
+                      <td className="numeric py-2 pr-4 text-right">
+                        {num(Number(m.atw_orders))}
+                      </td>
+                      <td className="numeric py-2 pr-4 text-right">
+                        {money0(Number(m.atw_revenue))}
+                      </td>
+                      <td className="numeric py-2 pr-4 text-right">
+                        {m.atw_share_pct === null ? '—' : `${m.atw_share_pct}%`}
+                      </td>
+                      <td className="numeric py-2 pr-4 text-right text-muted">
+                        {money0(Number(m.untagged_revenue))}
+                      </td>
+                      <td className="numeric py-2 text-right">
+                        {money0(Number(m.total_revenue))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-xs text-muted">
+              The ATW tag is applied by hand in Faire, so this is a floor rather
+              than a total — an untagged order may still be ours. The untagged
+              column is shown so any gap stays visible instead of quietly
+              lowering the number.
+            </p>
+          </>
         )}
       </section>
 
-      <section className="space-y-4">
+      {/* ── Faire campaigns by discount code ──────────────────────────── */}
+      <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-xs uppercase tracking-wider text-muted">
-            Recent orders
+            Faire campaigns
           </h2>
-          {orders.length > 15 && (
-            <span className="text-xs text-muted">
-              showing 15 of {num(orders.length)}
-            </span>
-          )}
+          <span className="text-xs text-muted">by promo code on the order</span>
         </div>
-        {orders.length === 0 ? (
-          <Empty>No orders in this window.</Empty>
+
+        {faireCampaigns.length === 0 ? (
+          <Empty>No campaign codes yet. Needs migration 0006 and a re-sync.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted">
-                  <th className="py-2 pr-4 font-normal">Retailer</th>
-                  <th className="py-2 pr-4 font-normal">Channel</th>
-                  <th className="py-2 pr-4 font-normal">Placed</th>
-                  <th className="py-2 pr-4 text-right font-normal">Amount</th>
-                  <th className="py-2 text-right font-normal">You keep</th>
+                <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                  <th className="py-2 pr-4 text-left font-normal">Code</th>
+                  <th className="py-2 pr-4 text-right font-normal">Orders</th>
+                  <th className="py-2 pr-4 text-right font-normal">Buyers</th>
+                  <th className="py-2 pr-4 text-right font-normal">ATW</th>
+                  <th className="py-2 pr-4 text-right font-normal">Revenue</th>
+                  <th className="py-2 text-right font-normal">Last order</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.slice(0, 15).map((o) => (
+                {faireCampaigns.map((c) => (
                   <tr
-                    key={o.display_id}
+                    key={c.code}
                     className="border-b border-border transition-colors hover:bg-surface-muted"
                   >
-                    <td className="py-2 pr-4">{o.retailer ?? '—'}</td>
-                    <td className="py-2 pr-4 text-muted">
-                      {o.channel === 'faire_marketplace'
-                        ? 'Marketplace'
-                        : o.channel === 'faire_direct'
-                          ? 'Faire Direct'
-                          : 'Shopify'}
-                    </td>
-                    <td className="numeric py-2 pr-4 text-muted">
-                      {o.placed_at.slice(0, 10)}
+                    <td className="py-2 pr-4">{c.code}</td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(Number(c.orders))}
                     </td>
                     <td className="numeric py-2 pr-4 text-right">
-                      {money(o.amount)}
+                      {num(Number(c.buyers))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(Number(c.atw_orders))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {money0(Number(c.revenue))}
+                    </td>
+                    <td className="numeric py-2 text-right text-muted">
+                      {c.last_order}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-xs text-muted">
+          An order carrying two codes counts toward both, so these rows do not
+          sum to total revenue. They answer what each campaign touched.
+        </p>
+      </section>
+
+      {/* ── Performance table ─────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wider text-muted">
+            Performance by source
+          </h2>
+          <span className="text-xs text-muted">
+            response % is replies ÷ sent, for every source
+          </span>
+        </div>
+
+        {rows.length === 0 ? (
+          <Empty>No outreach data. Run the syncs.</Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                  <th className="py-2 pr-4 text-left font-normal">Source</th>
+                  <th className="py-2 pr-4 text-right font-normal">Total</th>
+                  <th className="py-2 pr-4 text-right font-normal">Opened</th>
+                  <th className="py-2 pr-4 text-right font-normal">Response</th>
+                  <th className="py-2 pr-4 text-right font-normal">Response %</th>
+                  <th className="py-2 pr-4 text-right font-normal">Interested</th>
+                  <th className="py-2 pr-4 text-right font-normal">Closed</th>
+                  <th className="py-2 text-right font-normal">Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.channel}
+                    className="border-b border-border transition-colors hover:bg-surface-muted"
+                  >
+                    <td className="py-2 pr-4">
+                      {SOURCE_LABEL[r.channel] ?? r.channel}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">{num(r.sent)}</td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(r.opened)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(r.replies)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {pct(r.reply_rate_pct)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(r.interested)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(r.closed)}
                     </td>
                     <td className="numeric py-2 text-right">
-                      {money(o.payout)}
+                      {r.revenue > 0 ? money(r.revenue) : '—'}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-b-2 border-foreground font-medium">
+                  <td className="py-2 pr-4">Total</td>
+                  <td className="numeric py-2 pr-4 text-right">
+                    {num(totals.sent)}
+                  </td>
+                  <td className="py-2 pr-4" />
+                  <td className="numeric py-2 pr-4 text-right">
+                    {num(totals.replies)}
+                  </td>
+                  <td className="numeric py-2 pr-4 text-right">
+                    {pct(totalRate)}
+                  </td>
+                  <td className="py-2 pr-4" />
+                  <td className="numeric py-2 pr-4 text-right">
+                    {num(totals.closed)}
+                  </td>
+                  <td className="numeric py-2 text-right">
+                    {totals.revenue > 0 ? money(totals.revenue) : '—'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {totals.revenue === 0 && revenue > 0 && (
+          <p className="text-xs text-muted">
+            Revenue is not split by source yet. Faire exposes no buyer email, so
+            an order can only be tied to outreach by matching company names —
+            that runs once Woodpecker prospects are imported. The{' '}
+            {money0(revenue)} above is real and complete; only its attribution
+            to a channel is pending.
+          </p>
+        )}
+      </section>
+
+      {/* ── Woodpecker campaigns ──────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-xs uppercase tracking-wider text-muted">
+          Email campaigns
+        </h2>
+        {campaigns.length === 0 ? (
+          <Empty>No Woodpecker data. Run the Woodpecker sync.</Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                  <th className="py-2 pr-4 text-left font-normal">Campaign</th>
+                  <th className="py-2 pr-4 text-left font-normal">Status</th>
+                  <th className="py-2 pr-4 text-right font-normal">Sent</th>
+                  <th className="py-2 pr-4 text-right font-normal">Opened</th>
+                  <th className="py-2 pr-4 text-right font-normal">Open %</th>
+                  <th className="py-2 pr-4 text-right font-normal">Replied</th>
+                  <th className="py-2 pr-4 text-right font-normal">Reply %</th>
+                  <th className="py-2 text-right font-normal">Interested</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campaigns.map((c) => (
+                  <tr
+                    key={c.name}
+                    className="border-b border-border transition-colors hover:bg-surface-muted"
+                  >
+                    <td className="py-2 pr-4">{c.name}</td>
+                    <td className="py-2 pr-4 text-xs uppercase tracking-wider text-muted">
+                      {c.status?.toLowerCase() ?? '—'}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">{num(c.sent)}</td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(c.opened)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {c.sent > 0 ? `${((100 * c.opened) / c.sent).toFixed(1)}%` : '—'}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(c.replied)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {c.sent > 0 ? `${((100 * c.replied) / c.sent).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="numeric py-2 text-right">
+                      {num(c.interested)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── Migration off Faire ───────────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wider text-muted">
+            Migration off Faire
+          </h2>
+          <span className="text-xs text-muted">
+            buyer share is the honest measure
+          </span>
+        </div>
+        {migration.length === 0 ? (
+          <Empty>No orders synced yet.</Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                  <th className="py-2 pr-4 text-left font-normal">Month</th>
+                  <th className="py-2 pr-4 text-right font-normal">Revenue</th>
+                  <th className="py-2 pr-4 text-right font-normal">Direct</th>
+                  <th className="py-2 pr-4 text-right font-normal">Direct %</th>
+                  <th className="py-2 pr-4 text-right font-normal">Buyers</th>
+                  <th className="py-2 pr-4 text-right font-normal">Buyer %</th>
+                  <th className="py-2 text-right font-normal">To Faire</th>
+                </tr>
+              </thead>
+              <tbody>
+                {migration.map((m) => (
+                  <tr
+                    key={m.month}
+                    className="border-b border-border transition-colors hover:bg-surface-muted"
+                  >
+                    <td className="numeric py-2 pr-4">{m.month.slice(0, 7)}</td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {money0(Number(m.total_revenue))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {money0(Number(m.direct_revenue))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {m.revenue_migration_pct === null
+                        ? '—'
+                        : `${m.revenue_migration_pct}%`}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(m.total_buyers)}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {m.buyer_migration_pct === null
+                        ? '—'
+                        : `${m.buyer_migration_pct}%`}
+                    </td>
+                    <td className="numeric py-2 text-right">
+                      {money0(Number(m.commission_paid))}
                     </td>
                   </tr>
                 ))}
