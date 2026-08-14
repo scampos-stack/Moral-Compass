@@ -1,12 +1,8 @@
 -- ═══════════════════════════════════════════════════════════════════════
 --  RUN THIS WHOLE FILE, ONCE, IN A FRESH SUPABASE SQL EDITOR TAB.
---
---  Clear the editor first — appending this after previous scripts is what
---  produced the earlier errors. Select all, delete, paste this, Run.
---
---  Migrations 0004 + 0005 + 0006 + 0007 + 0008. Every statement tolerates
---  having been run before, so a partial earlier attempt is not a problem.
---  Creates and replaces objects only; deletes no data.
+--  Clear the editor first (Ctrl+A, Delete), paste this, Run.
+--  Migrations 0004-0010. Safe to re-run; creates and replaces only,
+--  deletes no data.
 -- ═══════════════════════════════════════════════════════════════════════
 
 
@@ -456,3 +452,106 @@ order by p.name, value desc;
 
 grant select on v_ghl_pipeline_summary, v_ghl_stage_funnel to authenticated;
 revoke select on v_ghl_pipeline_summary, v_ghl_stage_funnel from anon;
+
+
+-- ═══════════ 0009_rename_promotions ═══════════
+
+-- Rename v_faire_campaigns -> v_faire_promotions.
+--
+-- Three distinct things were collapsed under one word:
+--
+--   Woodpecker campaigns      external cold email. Synced from Woodpecker.
+--   Faire Campaigns           email campaigns run inside Faire
+--                             (Marketing -> Campaigns). No API; hand-entered
+--                             into faire_campaigns_manual.
+--   Faire promotions          discount codes attached to an order
+--                             (FaireMarket_Jan26, BlackFridaySale, WELCOME20).
+--
+-- The third is what the discount-code view actually reports, and it is NOT a
+-- campaign. A promo code is redeemed at checkout by whoever happens to have
+-- it; a campaign is a send to a chosen audience. Labelling redemption as
+-- campaign performance would credit a marketing send for revenue it may have
+-- had nothing to do with.
+
+drop view if exists v_faire_campaigns cascade;
+
+create or replace view v_faire_promotions with (security_invoker = on) as
+select
+  code,
+  count(*)                             as orders,
+  count(distinct retailer_id)          as buyers,
+  sum(amount)::numeric(12, 2)          as revenue,
+  count(*) filter (where sales_rep_name = 'ATW') as atw_orders,
+  min(placed_at)::date                 as first_order,
+  max(placed_at)::date                 as last_order
+from orders, unnest(discount_codes) as code
+where state <> 'cancelled'
+group by code
+order by revenue desc;
+
+grant select on v_faire_promotions to authenticated;
+revoke select on v_faire_promotions from anon;
+
+
+-- ═══════════ 0010_rep_breakdown ═══════════
+
+-- Break revenue out by sales rep, not just ATW-vs-rest.
+--
+-- Faire's "Sales representative" field holds more than one name:
+--   ATW   scampos@a-teamwork.com   — A-Teamwork, the agency
+--   Mark  mark@shopfrem.com        — in-house
+--
+-- The previous v_atw_revenue split ATW against everything-else, which quietly
+-- folded Mark's in-house sales into "untagged" and made the untagged gap look
+-- larger than it is. Three buckets are needed, not two: agency, in-house, and
+-- genuinely unattributed.
+
+create or replace view v_rep_revenue with (security_invoker = on) as
+select
+  date_trunc('month', placed_at)::date         as month,
+  coalesce(sales_rep_name, '(untagged)')       as rep,
+  count(*)                                     as orders,
+  count(distinct retailer_id)                  as buyers,
+  sum(amount)::numeric(12, 2)                  as revenue,
+  sum(commission_paid)::numeric(12, 2)         as commission
+from orders
+where state <> 'cancelled'
+group by 1, 2
+order by 1 desc, revenue desc;
+
+-- Monthly, one row per month, with each rep as its own column so the three
+-- buckets can be read side by side.
+create or replace view v_atw_revenue with (security_invoker = on) as
+select
+  date_trunc('month', placed_at)::date as month,
+
+  count(*) filter (where sales_rep_name = 'ATW')                 as atw_orders,
+  coalesce(sum(amount) filter (where sales_rep_name = 'ATW'), 0) as atw_revenue,
+  coalesce(sum(commission_paid) filter (where sales_rep_name = 'ATW'), 0)
+                                                                 as atw_commission,
+
+  -- Any other named rep. Named rather than hardcoded to 'Mark', so a rep
+  -- added in Faire tomorrow is counted instead of silently dropping into
+  -- the untagged bucket.
+  count(*) filter (where sales_rep_name is not null and sales_rep_name <> 'ATW')
+                                                                 as other_rep_orders,
+  coalesce(sum(amount) filter (where sales_rep_name is not null and sales_rep_name <> 'ATW'), 0)
+                                                                 as other_rep_revenue,
+
+  count(*) filter (where sales_rep_name is null)                 as untagged_orders,
+  coalesce(sum(amount) filter (where sales_rep_name is null), 0) as untagged_revenue,
+
+  count(*)                 as total_orders,
+  coalesce(sum(amount), 0) as total_revenue,
+
+  case when sum(amount) > 0
+       then round(100.0 * coalesce(sum(amount) filter (where sales_rep_name = 'ATW'), 0)
+                  / sum(amount), 2)
+  end as atw_share_pct
+from orders
+where state <> 'cancelled'
+group by 1
+order by 1 desc;
+
+grant select on v_rep_revenue, v_atw_revenue to authenticated;
+revoke select on v_rep_revenue, v_atw_revenue from anon;

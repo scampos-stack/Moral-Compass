@@ -1,5 +1,11 @@
 import { createReadClient } from '@/lib/supabase/read'
 import { Stat, Empty } from '@/components/stat'
+import {
+  RangeFilter,
+  parseRange,
+  resolveRange,
+  RANGES,
+} from '@/components/range-filter'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,22 +38,45 @@ type Perf = {
   revenue: number
 }
 
-export default async function Overview() {
+export default async function Overview({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string; from?: string; to?: string }>
+}) {
+  const sp = await searchParams
+  const range = parseRange(sp.range)
+  const window = resolveRange(range, sp.from, sp.to)
   const supabase = createReadClient()
 
-  const [perfRes, migRes, ordersRes, wpRes, atwRes, fcRes] = await Promise.all([
+  const [perfRes, migRes, ordersRes, wpRes, atwRes, fcRes, ghlRes, socialRes] =
+    await Promise.all([
     supabase.from('v_channel_performance').select('*'),
     supabase.from('v_migration_rate').select('*').limit(12),
-    supabase
-      .from('orders')
-      .select('amount, commission_paid, net_payout, placed_at, sales_channel')
-      .neq('state', 'cancelled'),
+    (() => {
+      // The headline figures respect the timeline; the monthly trend tables
+      // below deliberately do not — a trend truncated to 7 days is not a trend.
+      let q = supabase
+        .from('orders')
+        .select(
+          'amount, commission_paid, net_payout, placed_at, sales_channel, sales_rep_name'
+        )
+        .neq('state', 'cancelled')
+      if (window.from) q = q.gte('placed_at', window.from)
+      if (window.to) q = q.lt('placed_at', window.to)
+      return q.limit(20000)
+    })(),
     supabase
       .from('woodpecker_campaigns')
       .select('name, status, prospects, sent, opened, replied, interested, bounced')
       .order('sent', { ascending: false }),
     supabase.from('v_atw_revenue').select('*').limit(12),
-    supabase.from('v_faire_campaigns').select('*').limit(15),
+    supabase.from('v_faire_promotions').select('*').limit(15),
+    supabase.from('v_ghl_pipeline_summary').select('*'),
+    supabase
+      .from('ghl_social_posts')
+      .select('platform, posted_at')
+      .order('posted_at', { ascending: false })
+      .limit(200),
   ])
 
   const perf = ((perfRes.data ?? []) as Perf[]).map((p) => ({
@@ -66,6 +95,7 @@ export default async function Overview() {
     payout: Number(o.net_payout ?? 0),
     placed_at: o.placed_at as string,
     channel: o.sales_channel as string,
+    rep: (o.sales_rep_name as string | null) ?? null,
   }))
 
   const migration = (migRes.data ?? []) as Array<{
@@ -100,7 +130,7 @@ export default async function Overview() {
     atw_share_pct: number | null
   }>
 
-  const faireCampaigns = (fcRes.data ?? []) as Array<{
+  const promotions = (fcRes.data ?? []) as Array<{
     code: string
     orders: number
     buyers: number
@@ -111,6 +141,38 @@ export default async function Overview() {
 
   const atwTotal = atw.reduce((s, m) => s + Number(m.atw_revenue), 0)
   const atwOrders = atw.reduce((s, m) => s + Number(m.atw_orders), 0)
+
+  const pipelines = (ghlRes.data ?? []) as Array<{
+    pipeline: string
+    opportunities: number
+    open_count: number
+    won_count: number
+    lost_count: number
+    open_value: number
+    won_value: number
+    win_rate_pct: number | null
+  }>
+
+  const social = (socialRes.data ?? []) as Array<{
+    platform: string | null
+    posted_at: string | null
+  }>
+
+  // Posts per platform in the last 30 days — the Trust Gap the proposal
+  // names is about visible, recent activity, not lifetime totals.
+  const socialCut = (() => {
+    const d = new Date()
+    d.setUTCDate(d.getUTCDate() - 30)
+    return d.toISOString()
+  })()
+  const socialRecent = social.filter(
+    (p) => p.posted_at && p.posted_at >= socialCut
+  )
+  const byPlatform = new Map<string, number>()
+  for (const p of socialRecent) {
+    const k = p.platform ?? 'unknown'
+    byPlatform.set(k, (byPlatform.get(k) ?? 0) + 1)
+  }
 
   // ── Revenue, all-time, straight from synced Faire orders ────────────────
   const revenue = orders.reduce((s, o) => s + o.amount, 0)
@@ -142,8 +204,31 @@ export default async function Overview() {
 
   const rows = [...perf].sort((a, b) => b.sent - a.sent)
 
+  // Rep split inside the selected window, so the ATW tiles move with the
+  // dropdown instead of always reporting all time.
+  const repWindow = orders.reduce(
+    (a, o) => {
+      const bucket = o.rep === 'ATW' ? 'atw' : o.rep ? 'other' : 'untagged'
+      a[bucket].orders += 1
+      a[bucket].revenue += o.amount
+      return a
+    },
+    {
+      atw: { orders: 0, revenue: 0 },
+      other: { orders: 0, revenue: 0 },
+      untagged: { orders: 0, revenue: 0 },
+    }
+  )
+
   return (
     <main className="mx-auto max-w-6xl space-y-12 p-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <RangeFilter active={range} from={sp.from} to={sp.to} />
+        <span className="text-xs text-muted">
+          {RANGES[range]} · {num(orders.length)} orders
+        </span>
+      </div>
+
       {/* ── Headline ──────────────────────────────────────────────────── */}
       <section className="grid grid-cols-2 gap-6 md:grid-cols-4">
         <Stat
@@ -186,23 +271,30 @@ export default async function Overview() {
           </Empty>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-6 md:grid-cols-3">
+            <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
               <Stat
-                label="Tagged to ATW"
-                value={money0(atwTotal)}
-                note={`${num(atwOrders)} orders`}
+                label="ATW (agency)"
+                value={money0(repWindow.atw.revenue)}
+                note={`${num(repWindow.atw.orders)} orders`}
               />
               <Stat
-                label="Share of Faire revenue"
-                value={
-                  revenue > 0 ? `${((100 * atwTotal) / revenue).toFixed(1)}%` : '—'
-                }
-                note="of all synced orders"
+                label="Other rep (in-house)"
+                value={money0(repWindow.other.revenue)}
+                note={`${num(repWindow.other.orders)} orders`}
               />
               <Stat
                 label="Untagged"
-                value={money0(revenue - atwTotal)}
-                note="may still include our work"
+                value={money0(repWindow.untagged.revenue)}
+                note={`${num(repWindow.untagged.orders)} orders`}
+              />
+              <Stat
+                label="ATW share"
+                value={
+                  revenue > 0
+                    ? `${((100 * repWindow.atw.revenue) / revenue).toFixed(1)}%`
+                    : '—'
+                }
+                note={RANGES[range].toLowerCase()}
               />
             </div>
 
@@ -256,16 +348,16 @@ export default async function Overview() {
         )}
       </section>
 
-      {/* ── Faire campaigns by discount code ──────────────────────────── */}
+      {/* ── Faire promotions by discount code ──────────────────────────── */}
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-xs uppercase tracking-wider text-muted">
-            Faire campaigns
+            Faire promotions
           </h2>
-          <span className="text-xs text-muted">by promo code on the order</span>
+          <span className="text-xs text-muted">discount codes redeemed at checkout — not email campaigns</span>
         </div>
 
-        {faireCampaigns.length === 0 ? (
+        {promotions.length === 0 ? (
           <Empty>No campaign codes yet. Needs migration 0006 and a re-sync.</Empty>
         ) : (
           <div className="overflow-x-auto">
@@ -281,7 +373,7 @@ export default async function Overview() {
                 </tr>
               </thead>
               <tbody>
-                {faireCampaigns.map((c) => (
+                {promotions.map((c) => (
                   <tr
                     key={c.code}
                     className="border-b border-border transition-colors hover:bg-surface-muted"
@@ -460,6 +552,110 @@ export default async function Overview() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── GoHighLevel pipelines ─────────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wider text-muted">
+            Pipelines (GoHighLevel)
+          </h2>
+          <span className="text-xs text-muted">
+            open value is pipeline, won value is money
+          </span>
+        </div>
+
+        {pipelines.length === 0 ? (
+          <Empty>No pipeline data. Run the GoHighLevel sync.</Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                  <th className="py-2 pr-4 text-left font-normal">Pipeline</th>
+                  <th className="py-2 pr-4 text-right font-normal">Opps</th>
+                  <th className="py-2 pr-4 text-right font-normal">Open</th>
+                  <th className="py-2 pr-4 text-right font-normal">Won</th>
+                  <th className="py-2 pr-4 text-right font-normal">Lost</th>
+                  <th className="py-2 pr-4 text-right font-normal">Win %</th>
+                  <th className="py-2 pr-4 text-right font-normal">Open value</th>
+                  <th className="py-2 text-right font-normal">Won value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pipelines.map((p) => (
+                  <tr
+                    key={p.pipeline}
+                    className="border-b border-border transition-colors hover:bg-surface-muted"
+                  >
+                    <td className="py-2 pr-4">{p.pipeline}</td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(Number(p.opportunities))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(Number(p.open_count))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {num(Number(p.won_count))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right text-muted">
+                      {num(Number(p.lost_count))}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right">
+                      {p.win_rate_pct === null ? '—' : `${p.win_rate_pct}%`}
+                    </td>
+                    <td className="numeric py-2 pr-4 text-right text-muted">
+                      {money0(Number(p.open_value))}
+                    </td>
+                    <td className="numeric py-2 text-right">
+                      {money0(Number(p.won_value))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {pipelines.some(
+          (p) => /chain/i.test(p.pipeline) && Number(p.open_value) === 0
+        ) && (
+          <p className="text-xs text-muted">
+            Chain Store carries no deal values. LinkedIn revenue is recorded
+            here, so until amounts are entered on those opportunities the
+            LinkedIn row cannot show money — only effort.
+          </p>
+        )}
+      </section>
+
+      {/* ── Social ────────────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wider text-muted">
+            Social activity
+          </h2>
+          <span className="text-xs text-muted">last 30 days</span>
+        </div>
+
+        {byPlatform.size === 0 ? (
+          <Empty>
+            No posts in the last 30 days. Wholesale buyers check social before
+            ordering — the proposal calls this the Trust Gap.
+          </Empty>
+        ) : (
+          <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
+            {[...byPlatform.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .map(([platform, count]) => (
+                <Stat
+                  key={platform}
+                  label={platform}
+                  value={num(count)}
+                  note="posts in 30 days"
+                />
+              ))}
           </div>
         )}
       </section>
