@@ -15,21 +15,120 @@ create type sales_channel as enum (
 
 alter table orders
   add column sales_channel sales_channel not null default 'faire_marketplace',
+  -- Faire's verbatim `source` (MARKETPLACE, FAIRE_DIRECT, …), kept unmapped
+  -- alongside the normalised enum.
+  add column raw_source text,
   -- Rate at the time of the order. Stored, not looked up: Faire can change its
   -- take and historical margin must not silently rewrite itself.
-  add column commission_rate numeric(5, 4) not null default 0.15
-    check (commission_rate >= 0 and commission_rate <= 1);
+  add column commission_rate numeric(5, 4) not null default 0
+    check (commission_rate >= 0 and commission_rate <= 1),
+  -- Actual commission Faire charged, straight from payout_costs.commission.
+  -- NOT computed from amount * rate: Faire applies flat fees and discounts, so
+  -- the arithmetic estimate drifts from what was really taken.
+  add column commission_paid numeric(12, 2) not null default 0
+    check (commission_paid >= 0),
+  -- What the brand actually receives after commission, payout fees and
+  -- adjustments. The only figure that reflects real margin.
+  add column net_payout numeric(12, 2);
 
 create index on orders (sales_channel, placed_at desc);
 
-alter table orders
-  add column commission_paid numeric(12, 2)
-    generated always as (round(amount * commission_rate, 2)) stored;
-
--- Faire orders synced from the Faire API are marketplace orders by definition;
--- only Shopify and Faire Direct arrive by other routes.
 comment on column orders.sales_channel is
-  'Which channel captured the transaction. Drives the migration KPI and the commission calculation.';
+  'Which channel captured the transaction. Drives the migration KPI. Derived from Faire''s `source` field: MARKETPLACE -> faire_marketplace (1500 bps), FAIRE_DIRECT -> faire_direct (0 bps).';
+
+-- ── Linking outreach to Faire buyers ─────────────────────────────────────
+--
+-- The Faire order payload carries NO buyer email — only a first/last name and
+-- the store's company name. Woodpecker, by contrast, is keyed entirely on
+-- email. So there is no identifier common to both systems, and a prospect can
+-- only be tied to a retailer by matching company names.
+--
+-- That match is fuzzy and therefore fallible, so it is recorded explicitly
+-- rather than inferred at query time: every link states how it was made and
+-- how much to trust it. Attribution built on a guessed link must be legible
+-- as such.
+
+create type match_method as enum (
+  'exact_name',    -- normalised company names are identical
+  'fuzzy_name',    -- similarity above threshold; review before trusting
+  'manual'         -- a human confirmed it
+);
+
+-- Lowercase, strip punctuation and common retail suffixes, collapse spaces.
+-- "Coral & Lace Boutique, LLC" and "coral and lace boutique" must converge.
+create or replace function normalize_company_name(raw text)
+returns text
+language sql
+immutable
+set search_path = public
+as $$
+  select nullif(
+    trim(regexp_replace(
+      regexp_replace(
+        regexp_replace(lower(coalesce(raw, '')), '\&', ' and ', 'g'),
+        '\m(llc|inc|co|corp|ltd|the|boutique|shop|store)\M', ' ', 'g'
+      ),
+      '[^a-z0-9]+', ' ', 'g'
+    )),
+    ''
+  );
+$$;
+
+alter table retailers
+  add column normalized_name text
+    generated always as (normalize_company_name(name)) stored;
+
+alter table prospects
+  add column normalized_company text
+    generated always as (normalize_company_name(company_name)) stored;
+
+create index on retailers (normalized_name);
+create index on prospects (normalized_company);
+
+-- How each prospect→retailer link was established. Nullable FK on prospects
+-- would hide this; a table forces the provenance to be recorded.
+create table prospect_retailer_links (
+  prospect_id uuid primary key references prospects (id) on delete cascade,
+  retailer_id uuid not null references retailers (id) on delete cascade,
+  method      match_method not null,
+  confidence  numeric(3, 2) check (confidence between 0 and 1),
+  linked_at   timestamptz not null default now()
+);
+
+create index on prospect_retailer_links (retailer_id);
+
+alter table prospect_retailer_links enable row level security;
+
+create policy prospect_retailer_links_read on prospect_retailer_links
+  for select to authenticated using (true);
+
+-- Links prospects to retailers on exact normalised-name equality only.
+-- Deliberately conservative: fuzzy matching is left to a reviewed step,
+-- because a wrong link silently misattributes revenue.
+create or replace function link_prospects_to_retailers()
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  affected integer;
+begin
+  insert into prospect_retailer_links (prospect_id, retailer_id, method, confidence)
+  select p.id, r.id, 'exact_name', 1.00
+  from prospects p
+  join retailers r on r.normalized_name = p.normalized_company
+  where p.normalized_company is not null
+  -- Skip ambiguous names: if one normalised name maps to several retailers,
+  -- picking arbitrarily would fabricate an attribution.
+    and (select count(*) from retailers r2
+         where r2.normalized_name = p.normalized_company) = 1
+  on conflict (prospect_id) do nothing;
+
+  get diagnostics affected = row_count;
+  return affected;
+end;
+$$;
 
 -- First order per retailer, so we can tell acquisition from migration.
 create view v_retailer_journey with (security_invoker = on) as
@@ -85,6 +184,52 @@ select
   round(commission_paid, 2) as commission_recoverable
 from monthly
 order by month desc;
+
+-- ── Attribution, revised ─────────────────────────────────────────────────
+--
+-- Supersedes the 0001 definition. That version joined prospects to orders on
+-- prospects.retailer_id, which assumed we could identify a Faire buyer
+-- directly. We cannot — Faire exposes no email — so the join now runs through
+-- prospect_retailer_links, and the recorded match method travels with the
+-- attribution so a name-matched credit is never mistaken for a certain one.
+create or replace function attribute_orders(window_hours integer default 72)
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  affected integer;
+begin
+  with candidate as (
+    select distinct on (o.id)
+      o.id  as order_id,
+      t.id  as touch_id,
+      t.channel,
+      extract(epoch from (o.placed_at - t.sent_at)) / 3600.0 as hours_since,
+      l.method
+    from orders o
+    join prospect_retailer_links l on l.retailer_id = o.retailer_id
+    join prospects p on p.id = l.prospect_id
+    join touches   t on t.prospect_id = p.id
+    where t.sent_at <= o.placed_at
+      and t.sent_at >= o.placed_at - make_interval(hours => window_hours)
+    order by o.id, t.sent_at desc
+  )
+  insert into order_attributions (order_id, touch_id, channel, hours_since_touch, method)
+  select order_id, touch_id, channel, round(hours_since, 2), 'last_touch:' || method
+  from candidate
+  on conflict (order_id) do update
+    set touch_id          = excluded.touch_id,
+        channel           = excluded.channel,
+        hours_since_touch = excluded.hours_since_touch,
+        computed_at       = now()
+    where order_attributions.method <> 'manual';
+
+  get diagnostics affected = row_count;
+  return affected;
+end;
+$$;
 
 -- Both views are declared `security_invoker = on` above. Postgres defaults
 -- views to DEFINER rights, which would run them as the owner and quietly

@@ -22,7 +22,12 @@ create type touch_kind as enum (
 
 create type reply_sentiment as enum ('positive', 'neutral', 'negative');
 
-create type order_state as enum ('pending', 'confirmed', 'cancelled');
+-- Normalised from Faire's raw states (NEW, PROCESSING, IN_TRANSIT, DELIVERED,
+-- BACKORDERED, CANCELED, …). The verbatim value is kept in orders.raw_state so
+-- a state we have not seen yet never silently becomes 'pending'.
+create type order_state as enum (
+  'pending', 'processing', 'in_transit', 'delivered', 'cancelled'
+);
 
 -- ── Dimensions ───────────────────────────────────────────────────────────
 
@@ -147,11 +152,13 @@ alter table linkedin_daily
 create table orders (
   id             uuid primary key default gen_random_uuid(),
   faire_order_id text not null unique,
+  display_id     text,             -- the human-facing code, e.g. XNNZYET3TV
   retailer_id    uuid not null references retailers (id) on delete restrict,
   placed_at      timestamptz not null,
   amount         numeric(12, 2) not null check (amount >= 0),
   currency       text not null default 'USD',
   state          order_state not null default 'pending',
+  raw_state      text,             -- Faire's verbatim state, unmapped
   is_confirmed   boolean not null default false,
   synced_at      timestamptz not null default now()
 );
