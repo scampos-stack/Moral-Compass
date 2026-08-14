@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createReadClient } from '@/lib/supabase/read'
 
 export type EntryState = { ok: boolean; message: string } | null
 
@@ -36,10 +36,8 @@ export async function saveLinkedInDay(
     }
   }
 
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // The dashboard has no sign-in, so there is no user to attribute this to.
+  const supabase = createReadClient()
 
   const { error } = await supabase.from('linkedin_daily').upsert(
     {
@@ -51,7 +49,6 @@ export async function saveLinkedInDay(
       replies_neutral: toInt(formData.get('replies_neutral')),
       replies_negative: toInt(formData.get('replies_negative')),
       notes: (formData.get('notes') as string)?.trim() || null,
-      entered_by: user?.id ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'activity_date' }

@@ -78,9 +78,15 @@ async function getOrdersPage(params: {
   const { token, base } = config()
   const url = new URL(`${base}/orders`)
   url.searchParams.set('limit', String(params.limit))
-  if (params.cursor) url.searchParams.set('cursor', params.cursor)
-  if (params.updatedAtMin)
+
+  // Mutually exclusive: Faire 400s with "updated_at_min must not be provided
+  // if cursor is provided". The cursor already encodes the window, so once we
+  // have one it is the only filter we send.
+  if (params.cursor) {
+    url.searchParams.set('cursor', params.cursor)
+  } else if (params.updatedAtMin) {
     url.searchParams.set('updated_at_min', params.updatedAtMin)
+  }
 
   const res = await fetch(url, {
     headers: { 'X-FAIRE-ACCESS-TOKEN': token },
@@ -116,7 +122,8 @@ export async function* iterateOrders(opts: {
     const data = await getOrdersPage({
       limit: FAIRE_MAX_LIMIT,
       cursor,
-      updatedAtMin: opts.updatedAtMin,
+      // Only meaningful on the first request; the cursor carries it after that.
+      updatedAtMin: cursor ? undefined : opts.updatedAtMin,
     })
     page += 1
 

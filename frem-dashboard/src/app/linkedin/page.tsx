@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createReadClient } from '@/lib/supabase/read'
 import { EntryForm } from './entry-form'
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +19,7 @@ function pct(numerator: number, denominator: number) {
 }
 
 export default async function LinkedInPage() {
-  const supabase = await createClient()
+  const supabase = createReadClient()
   const { data, error } = await supabase
     .from('linkedin_daily')
     .select(
