@@ -9,7 +9,10 @@
 -- One row per campaign, overwritten each sync. History is not kept here: the
 -- numbers only ever move forward, and the dashboard reports current standing.
 
-create table woodpecker_campaigns (
+-- Re-runnable throughout: an earlier attempt failed at the view and left the
+-- table behind, so every statement here tolerates already existing.
+
+create table if not exists woodpecker_campaigns (
   id            bigint primary key,          -- Woodpecker's own campaign id
   name          text not null,
   status        text,                        -- RUNNING | STOPPED | COMPLETED
@@ -36,6 +39,7 @@ create table woodpecker_campaigns (
 
 alter table woodpecker_campaigns enable row level security;
 
+drop policy if exists woodpecker_campaigns_read on woodpecker_campaigns;
 create policy woodpecker_campaigns_read on woodpecker_campaigns
   for select to authenticated using (true);
 
@@ -53,7 +57,13 @@ grant select on woodpecker_campaigns to authenticated;
 -- other source by sends, which inflated LinkedIn from 1.43% to 6.49% and made
 -- it look like the best-converting channel.
 
-create or replace view v_channel_performance with (security_invoker = on) as
+-- DROP, not CREATE OR REPLACE. The 0001 version returned `sent` as numeric
+-- (sum over a bigint union); this one returns bigint, and Postgres refuses to
+-- change a view column's type in place:
+--   42P16: cannot change data type of view column "sent"
+drop view if exists v_channel_performance cascade;
+
+create view v_channel_performance with (security_invoker = on) as
 with sources as (
   -- Woodpecker: cumulative campaign counters.
   select

@@ -12,13 +12,16 @@
 -- order may still be A-Teamwork's. Everything below is built to keep that
 -- distinction visible — never present tagged revenue as the whole picture.
 
+-- Re-runnable: a failed earlier attempt may have added the columns already.
 alter table orders
-  add column sales_rep_name text,
+  add column if not exists sales_rep_name text,
   -- All discount codes on the order. An order can carry more than one.
-  add column discount_codes text[] not null default '{}';
+  add column if not exists discount_codes text[] not null default '{}';
 
-create index on orders (sales_rep_name) where sales_rep_name is not null;
-create index on orders using gin (discount_codes);
+create index if not exists orders_sales_rep_idx
+  on orders (sales_rep_name) where sales_rep_name is not null;
+create index if not exists orders_discount_codes_idx
+  on orders using gin (discount_codes);
 
 comment on column orders.sales_rep_name is
   'Faire sales rep credited on the order. "ATW" = A-Teamwork. Applied manually, so absence does not prove an order was not ours.';
