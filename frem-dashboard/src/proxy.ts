@@ -4,8 +4,11 @@ import { createServerClient } from '@supabase/ssr'
 /**
  * Refreshes the Supabase session on every request so Server Components always
  * see a valid token, and redirects unauthenticated users away from the app.
+ *
+ * Named `proxy` in a `proxy.ts` file — Next.js 16 deprecated the `middleware`
+ * convention in favour of this one.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(

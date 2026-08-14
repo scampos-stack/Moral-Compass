@@ -1,26 +1,77 @@
 @import "tailwindcss";
 
+/* Frém identity is black and white — the wordmark is a high-contrast serif with
+   wide tracking, and all campaign colour lives in photography, never in chrome.
+   The UI stays monochrome so product imagery is the only thing that carries
+   colour. The single accent below is reserved for destructive states. */
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
-}
+  --foreground: #0a0a0a;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --surface: #ffffff;
+  --surface-muted: #f5f5f4;
+  --border: #e5e5e5;
+  --muted: #737373;
+
+  /* Trend indicators. Weight and glyph carry the meaning; these are near-black
+     and near-grey so the palette holds even when printed or screenshotted. */
+  --up: #0a0a0a;
+  --down: #737373;
+  --flat: #a3a3a3;
+
+  --danger: #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
-    --foreground: #ededed;
+    --foreground: #fafafa;
+
+    --surface: #141414;
+    --surface-muted: #1c1c1c;
+    --border: #2a2a2a;
+    --muted: #a3a3a3;
+
+    --up: #fafafa;
+    --down: #a3a3a3;
+    --flat: #525252;
+
+    --danger: #f87171;
   }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-flat: var(--flat);
+  --color-danger: var(--danger);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* The wordmark treatment: serif, wide tracking, as on the FRÉM WHOLESALE lockup. */
+.wordmark {
+  font-family: ui-serif, Georgia, "Times New Roman", serif;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* Figures line up in columns when tabular. */
+.numeric {
+  font-variant-numeric: tabular-nums;
 }

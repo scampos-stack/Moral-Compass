@@ -234,7 +234,9 @@ $$;
 -- ── Reporting views ──────────────────────────────────────────────────────
 
 -- The spreadsheet's Performance Table, per channel.
-create view v_channel_performance as
+-- security_invoker: without it Postgres runs views as the owner and bypasses
+-- RLS on the base tables.
+create view v_channel_performance with (security_invoker = on) as
 with effort as (
   select channel,
          sum(sent)    as sent,
@@ -277,7 +279,7 @@ from effort_rolled e
 left join revenue r on r.channel = e.channel;
 
 -- Daily effort across every channel, for the 7d/30d trend panels.
-create view v_outreach_daily_all as
+create view v_outreach_daily_all with (security_invoker = on) as
 select activity_date, channel, sum(sent) as sent, sum(replies) as replies
 from outreach_daily
 group by activity_date, channel
