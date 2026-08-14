@@ -54,8 +54,14 @@ create table sending_domains (
 create table retailers (
   id                uuid primary key default gen_random_uuid(),
   faire_retailer_id text unique,     -- null until we see them on Faire
-  name              text not null,
-  primary_email     text,
+  name              text not null,   -- store/company name
+  -- Faire gives us the buyer's person-name but never their email, so these are
+  -- a second axis for matching a retailer to an outreach prospect.
+  contact_first_name text,
+  contact_last_name  text,
+  primary_email     text,            -- never from Faire; Shopify/CRM only
+  city              text,
+  state_code        text,
   country           text,
   created_at        timestamptz not null default now()
 );
@@ -68,6 +74,8 @@ create table prospects (
   email        text unique,
   linkedin_url text unique,
   company_name text,
+  first_name   text,
+  last_name    text,
   retailer_id  uuid references retailers (id) on delete set null,
   created_at   timestamptz not null default now(),
   -- A prospect is only useful if we can reach them somehow.

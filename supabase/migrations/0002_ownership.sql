@@ -49,9 +49,11 @@ comment on column orders.sales_channel is
 -- as such.
 
 create type match_method as enum (
-  'exact_name',    -- normalised company names are identical
-  'fuzzy_name',    -- similarity above threshold; review before trusting
-  'manual'         -- a human confirmed it
+  'exact_email',    -- a shared email; only ever from Shopify or the CRM
+  'company_name',   -- normalised company names identical and unambiguous
+  'contact_name',   -- buyer person-name identical and unambiguous
+  'fuzzy_name',     -- similarity above threshold; review before trusting
+  'manual'          -- a human confirmed it
 );
 
 -- Lowercase, strip punctuation and common retail suffixes, collapse spaces.
@@ -76,14 +78,24 @@ $$;
 
 alter table retailers
   add column normalized_name text
-    generated always as (normalize_company_name(name)) stored;
+    generated always as (normalize_company_name(name)) stored,
+  add column normalized_contact text
+    generated always as (
+      normalize_company_name(contact_first_name || ' ' || contact_last_name)
+    ) stored;
 
 alter table prospects
   add column normalized_company text
-    generated always as (normalize_company_name(company_name)) stored;
+    generated always as (normalize_company_name(company_name)) stored,
+  add column normalized_contact text
+    generated always as (
+      normalize_company_name(first_name || ' ' || last_name)
+    ) stored;
 
 create index on retailers (normalized_name);
+create index on retailers (normalized_contact);
 create index on prospects (normalized_company);
+create index on prospects (normalized_contact);
 
 -- How each prospect→retailer link was established. Nullable FK on prospects
 -- would hide this; a table forces the provenance to be recorded.
@@ -102,9 +114,14 @@ alter table prospect_retailer_links enable row level security;
 create policy prospect_retailer_links_read on prospect_retailer_links
   for select to authenticated using (true);
 
--- Links prospects to retailers on exact normalised-name equality only.
--- Deliberately conservative: fuzzy matching is left to a reviewed step,
--- because a wrong link silently misattributes revenue.
+-- Links prospects to retailers on exact normalised equality, company name
+-- first and buyer contact name second. Deliberately conservative: fuzzy
+-- matching is left to a reviewed step, because a wrong link silently
+-- misattributes revenue.
+--
+-- Both passes skip ambiguous names. If one normalised name maps to several
+-- retailers, picking arbitrarily would fabricate an attribution — better to
+-- leave the prospect unlinked and let a human decide.
 create or replace function link_prospects_to_retailers()
 returns integer
 language plpgsql
@@ -113,20 +130,38 @@ set search_path = public
 as $$
 declare
   affected integer;
+  total    integer := 0;
 begin
+  -- Pass 1: company name. The stronger signal — a store name identifies the
+  -- buying entity, whereas a person may work anywhere.
   insert into prospect_retailer_links (prospect_id, retailer_id, method, confidence)
-  select p.id, r.id, 'exact_name', 1.00
+  select p.id, r.id, 'company_name', 0.90
   from prospects p
   join retailers r on r.normalized_name = p.normalized_company
   where p.normalized_company is not null
-  -- Skip ambiguous names: if one normalised name maps to several retailers,
-  -- picking arbitrarily would fabricate an attribution.
     and (select count(*) from retailers r2
          where r2.normalized_name = p.normalized_company) = 1
   on conflict (prospect_id) do nothing;
 
   get diagnostics affected = row_count;
-  return affected;
+  total := total + affected;
+
+  -- Pass 2: buyer contact name, for prospects pass 1 left unlinked. Weaker —
+  -- names collide far more than store names do — so it is scored lower and
+  -- must stay distinguishable downstream.
+  insert into prospect_retailer_links (prospect_id, retailer_id, method, confidence)
+  select p.id, r.id, 'contact_name', 0.60
+  from prospects p
+  join retailers r on r.normalized_contact = p.normalized_contact
+  where p.normalized_contact is not null
+    and (select count(*) from retailers r2
+         where r2.normalized_contact = p.normalized_contact) = 1
+    and (select count(*) from prospects p2
+         where p2.normalized_contact = p.normalized_contact) = 1
+  on conflict (prospect_id) do nothing;
+
+  get diagnostics affected = row_count;
+  return total + affected;
 end;
 $$;
 

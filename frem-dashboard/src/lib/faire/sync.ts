@@ -82,23 +82,38 @@ export async function syncFaireOrders(opts: {
       result.pages = batch.page
       if (batch.truncated) result.truncated = true
 
-      // Retailers first — orders carry a NOT NULL FK to them.
-      const retailers = new Map<string, string>()
-      for (const o of batch.orders) {
-        if (!retailers.has(o.retailer_id)) {
-          retailers.set(o.retailer_id, retailerName(o))
+      // Retailers first — orders carry a NOT NULL FK to them. Keep the buyer
+      // contact name and location: with no email on offer, they are the only
+      // fields that can tie a Faire retailer to an outreach prospect.
+      const retailers = new Map<
+        string,
+        {
+          faire_retailer_id: string
+          name: string
+          contact_first_name: string | null
+          contact_last_name: string | null
+          city: string | null
+          state_code: string | null
+          country: string | null
         }
+      >()
+
+      for (const o of batch.orders) {
+        // Later pages carry more recent orders, so let them win on conflict.
+        retailers.set(o.retailer_id, {
+          faire_retailer_id: o.retailer_id,
+          name: retailerName(o),
+          contact_first_name: o.customer?.first_name?.trim() || null,
+          contact_last_name: o.customer?.last_name?.trim() || null,
+          city: o.address?.city?.trim() || null,
+          state_code: o.address?.state_code?.trim() || null,
+          country: o.address?.country_code?.trim() || null,
+        })
       }
 
       const { data: retailerRows, error: retailerError } = await supabase
         .from('retailers')
-        .upsert(
-          [...retailers].map(([faire_retailer_id, name]) => ({
-            faire_retailer_id,
-            name,
-          })),
-          { onConflict: 'faire_retailer_id' }
-        )
+        .upsert([...retailers.values()], { onConflict: 'faire_retailer_id' })
         .select('id, faire_retailer_id')
 
       if (retailerError) throw new Error(`retailers: ${retailerError.message}`)
