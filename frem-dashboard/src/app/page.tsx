@@ -173,10 +173,19 @@ export default async function Overview({
           value={money0(s.payout)}
           note={`${money0(s.commission)} to Faire`}
         />
+        {/* Shows the tagged figure but names the campaign revenue beside it,
+            so the headline never reads as the whole of A-Teamwork's work.
+            Not summed — see the contribution panel for why. */}
         <Stat
-          label="ATW attributed"
+          label="ATW rep-tagged"
           value={money0(s.rep.atw)}
-          note={s.atwPct === null ? 'no orders' : `${s.atwPct.toFixed(1)}% of revenue`}
+          note={
+            atw && Number(atw.campaign_revenue) > 0
+              ? `plus ${money0(Number(atw.campaign_revenue))} via campaigns`
+              : s.atwPct === null
+                ? 'no orders'
+                : `${s.atwPct.toFixed(1)}% of revenue`
+          }
         />
         <Stat
           label="Direct (0% fee)"
@@ -221,12 +230,38 @@ export default async function Overview({
             </div>
           </div>
 
+          <div className="border border-border p-4">
+            <p className="text-sm">
+              Together, A-Teamwork moved between{' '}
+              <span className="numeric font-medium">
+                {money0(
+                  Math.max(
+                    Number(atw.direct_revenue),
+                    Number(atw.campaign_revenue)
+                  )
+                )}
+              </span>{' '}
+              and{' '}
+              <span className="numeric font-medium">
+                {money0(
+                  Number(atw.direct_revenue) + Number(atw.campaign_revenue)
+                )}
+              </span>
+              .
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              A range, not a number, because the two systems overlap: an order
+              can be rep-tagged AND credited to a campaign. The floor assumes
+              every campaign order was also tagged; the ceiling assumes none
+              were. The truth sits between, and neither Faire nor the API says
+              where.
+            </p>
+          </div>
+
           <p className="text-xs text-muted">
-            Deliberately not added together. The rep tag and Faire&apos;s
-            campaign attribution measure overlapping ground — an order can be
-            both — so one combined headline would double-count an unknown
-            share. Faire never assigns campaign revenue to a rep, which is why
-            the tag alone understates the work.
+            Reported separately on purpose. Faire never assigns campaign
+            revenue to a rep, so the tag alone understates the work — the copy,
+            the visuals and the sending are all invisible to it.
           </p>
         </Section>
       )}
