@@ -7,6 +7,7 @@ const NAV = [
   { href: '/', label: 'Overview', hint: 'Revenue, ATW, insights' },
   { href: '/faire', label: 'Faire', hint: 'Promotions, migration' },
   { href: '/outreach', label: 'Outreach', hint: 'Woodpecker, LinkedIn' },
+  { href: '/faire-campaigns', label: 'Faire campaigns', hint: 'Log email sends' },
   { href: '/pipelines', label: 'Pipelines', hint: 'GoHighLevel deals' },
   { href: '/social', label: 'Social', hint: 'Posts by platform' },
   { href: '/linkedin', label: 'LinkedIn entry', hint: 'Type daily numbers' },
