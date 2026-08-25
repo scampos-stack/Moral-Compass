@@ -12,6 +12,7 @@ const NAV = [
   { href: '/pipelines', label: 'Pipelines', hint: 'GoHighLevel deals' },
   { href: '/social', label: 'Social', hint: 'Posts by platform' },
   { href: '/linkedin', label: 'LinkedIn entry', hint: 'Type daily numbers' },
+  { href: '/sync', label: 'Data', hint: 'Freshness, sync now' },
 ] as const
 
 export function Sidebar() {

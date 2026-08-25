@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { Freshness } from "@/components/freshness";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,7 +32,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Suspense fallback={<div className="w-full md:w-56" />}>
             <Sidebar />
           </Suspense>
-          <div className="min-w-0 flex-1">{children}</div>
+          <div className="min-w-0 flex-1">
+            <Suspense fallback={null}>
+              <Freshness />
+            </Suspense>
+            {children}
+          </div>
         </div>
       </body>
     </html>
