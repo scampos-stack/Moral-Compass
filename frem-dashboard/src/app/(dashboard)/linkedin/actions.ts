@@ -48,25 +48,42 @@ export async function saveLinkedInDay(
   }
 
   const connectionsSent = toInt(formData.get('connections_sent'))
-  const connectionsAccepted = toInt(formData.get('connections_accepted'))
-
-  // Mirrors the accepted_within_sent CHECK constraint. Caught here so the user
-  // gets a sentence instead of a Postgres error.
-  if (connectionsAccepted > connectionsSent) {
-    return {
-      ok: false,
-      message: `Accepted (${connectionsAccepted}) cannot exceed sent (${connectionsSent}).`,
-    }
-  }
+  const rawTotal = formData.get('network_total')
+  const networkTotal =
+    rawTotal === null || String(rawTotal).trim() === ''
+      ? null
+      : toInt(rawTotal)
 
   // The dashboard has no sign-in, so there is no user to attribute this to.
   const supabase = createReadClient()
+
+  // Acceptances are the rise in network size since the last recorded total,
+  // which is what the tracking sheet computed by hand. Derived here rather
+  // than trusted from the client so the stored number cannot disagree with
+  // the totals it came from.
+  let connectionsAccepted = toInt(formData.get('connections_accepted'))
+  if (networkTotal !== null) {
+    const { data: prev } = await supabase
+      .from('linkedin_daily')
+      .select('network_total')
+      .lt('activity_date', activityDate)
+      .not('network_total', 'is', null)
+      .order('activity_date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const previous = prev?.network_total ?? null
+    // A falling total means disconnections, not negative acceptances.
+    connectionsAccepted =
+      previous === null ? 0 : Math.max(networkTotal - Number(previous), 0)
+  }
 
   const { error } = await supabase.from('linkedin_daily').upsert(
     {
       activity_date: activityDate,
       connections_sent: connectionsSent,
       connections_accepted: connectionsAccepted,
+      network_total: networkTotal,
       inmails: toInt(formData.get('inmails')),
       replies_positive: toInt(formData.get('replies_positive')),
       replies_neutral: toInt(formData.get('replies_neutral')),
