@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Tabs } from "@/components/tabs";
+import { Sidebar } from "@/components/sidebar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,15 +25,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <header className="flex items-end justify-between px-8 pt-6">
-          <div>
-            <p className="wordmark text-xs text-muted">Frém</p>
-            <p className="text-lg">Moral Compass</p>
-          </div>
-        </header>
-        <Tabs />
-        <div className="flex-1">{children}</div>
+      <body className="min-h-full">
+        <div className="flex min-h-screen flex-col md:flex-row">
+          {/* useSearchParams needs a Suspense boundary during prerender. */}
+          <Suspense fallback={<div className="w-full md:w-56" />}>
+            <Sidebar />
+          </Suspense>
+          <div className="min-w-0 flex-1">{children}</div>
+        </div>
       </body>
     </html>
   );
