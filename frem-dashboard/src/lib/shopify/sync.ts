@@ -27,6 +27,9 @@ export type ShopifyResult = {
   oldest: string | null
   newest: string | null
   windowLimited: boolean
+  /** Orders Faire pushed into Shopify — mirrors, not direct sales. */
+  faireMirrors: number
+  directSales: number
   error?: string
 }
 
@@ -116,6 +119,8 @@ export async function syncShopify(opts: {
     oldest: null,
     newest: null,
     windowLimited: false,
+    faireMirrors: 0,
+    directSales: 0,
   }
 
   try {
@@ -188,6 +193,18 @@ export async function syncShopify(opts: {
         .from('shopify_orders')
         .upsert(rows.slice(i, i + 250), { onConflict: 'id' })
       if (error) throw new Error(`upsert: ${error.message}`)
+    }
+
+    // Counted here so the sync result itself shows the split: Faire mirrors
+    // every marketplace order into Shopify, and counting them as direct sales
+    // would double the entire business.
+    for (const r of rows) {
+      const src = String(r.source_name ?? '').toLowerCase()
+      const tags = String(r.tags ?? '').toLowerCase()
+      if (src === 'faire' || tags.includes('faire')) result.faireMirrors += 1
+      else if (src !== 'shopify_draft_order' && !r.test && !r.cancelled_at) {
+        result.directSales += 1
+      }
     }
 
     result.orders = rows.length
