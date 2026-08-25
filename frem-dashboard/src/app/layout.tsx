@@ -1,13 +1,7 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/sidebar";
-import { Freshness } from "@/components/freshness";
-import { Topbar } from "@/components/topbar";
 import { themeScript } from "@/components/theme-toggle";
-import { isUnlocked } from "@/lib/edit-gate";
-import { currentUser } from "@/lib/session";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,9 +18,13 @@ export const metadata: Metadata = {
   description: "Wholesale outreach and revenue for Frém",
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const [unlocked, user] = await Promise.all([isUnlocked(), currentUser()]);
-
+/**
+ * Document shell only. The sidebar, header and data banner live in the
+ * (dashboard) group so signed-out pages like /login render bare — a nested
+ * layout renders INSIDE its parent rather than replacing it, so chrome put
+ * here would follow the login page no matter what.
+ */
+export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
@@ -38,20 +36,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             never sees a white flash on load. */}
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-full">
-        <div className="flex min-h-screen flex-col md:flex-row">
-          {/* useSearchParams needs a Suspense boundary during prerender. */}
-          <Suspense fallback={<div className="w-full md:w-56" />}>
-            <Sidebar />
-          </Suspense>
-          <div className="min-w-0 flex-1">
-            <Topbar unlocked={unlocked} email={user?.email} />
-            <Suspense fallback={null}>
-              <Freshness />
-            </Suspense>
-            {children}
-          </div>
-        </div>
+      {/* suppressHydrationWarning: password managers and other extensions
+          add attributes to <body> before React hydrates. Harmless, but it
+          logs a mismatch we cannot fix from here. */}
+      <body className="min-h-full" suppressHydrationWarning>
+        {children}
       </body>
     </html>
   );

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useActionState } from 'react'
-import { runSync, type SyncState } from '@/app/sync/actions'
+import { runSync, type SyncState } from '@/app/(dashboard)/sync/actions'
 import { ThemeToggle } from './theme-toggle'
 import { signOut } from '@/app/auth/actions'
 
