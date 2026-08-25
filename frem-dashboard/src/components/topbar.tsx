@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useActionState } from 'react'
 import { runSync, type SyncState } from '@/app/sync/actions'
 import { ThemeToggle } from './theme-toggle'
+import { signOut } from '@/app/auth/actions'
 
 /**
  * Persistent header: sync and theme, reachable from every page.
@@ -12,7 +13,13 @@ import { ThemeToggle } from './theme-toggle'
  * dead control — syncing writes to the database, so it stays behind the
  * passcode, but the path to unlock should be one click and not a mystery.
  */
-export function Topbar({ unlocked }: { unlocked: boolean }) {
+export function Topbar({
+  unlocked,
+  email,
+}: {
+  unlocked: boolean
+  email?: string | null
+}) {
   const [state, action, pending] = useActionState<SyncState, FormData>(
     runSync,
     null
@@ -37,6 +44,9 @@ export function Topbar({ unlocked }: { unlocked: boolean }) {
       </div>
 
       <div className="flex items-center gap-2">
+        {email && (
+          <span className="hidden text-xs text-muted sm:inline">{email}</span>
+        )}
         <ThemeToggle />
         {unlocked ? (
           <form action={action}>
@@ -57,6 +67,14 @@ export function Topbar({ unlocked }: { unlocked: boolean }) {
             Sync now
           </Link>
         )}
+        <form action={signOut}>
+          <button
+            type="submit"
+            className="border border-border px-3 py-1.5 text-xs uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground"
+          >
+            Sign out
+          </button>
+        </form>
       </div>
     </div>
   )

@@ -7,6 +7,7 @@ import { Freshness } from "@/components/freshness";
 import { Topbar } from "@/components/topbar";
 import { themeScript } from "@/components/theme-toggle";
 import { isUnlocked } from "@/lib/edit-gate";
+import { currentUser } from "@/lib/session";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const unlocked = await isUnlocked();
+  const [unlocked, user] = await Promise.all([isUnlocked(), currentUser()]);
 
   return (
     <html
@@ -44,7 +45,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             <Sidebar />
           </Suspense>
           <div className="min-w-0 flex-1">
-            <Topbar unlocked={unlocked} />
+            <Topbar unlocked={unlocked} email={user?.email} />
             <Suspense fallback={null}>
               <Freshness />
             </Suspense>
