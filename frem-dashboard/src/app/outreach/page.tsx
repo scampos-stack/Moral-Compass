@@ -31,7 +31,7 @@ export default async function OutreachPage({
     supabase
       .from('linkedin_daily')
       .select(
-        'activity_date, connections_sent, connections_accepted, inmails, replies_total'
+        'activity_date, connections_sent, connections_accepted, inmails, replies_total, notes'
       )
       .order('activity_date', { ascending: false })
       .limit(60),
@@ -71,6 +71,7 @@ export default async function OutreachPage({
     connections_accepted: number
     inmails: number
     replies_total: number
+    notes: string | null
   }>
 
   const totalSent = perf.reduce((a, p) => a + p.sent, 0)
@@ -243,7 +244,8 @@ export default async function OutreachPage({
                 <th className="py-2 pr-4 text-right font-normal">Accepted</th>
                 <th className="py-2 pr-4 text-right font-normal">Accept %</th>
                 <th className="py-2 pr-4 text-right font-normal">InMails</th>
-                <th className="py-2 text-right font-normal">Replies</th>
+                <th className="py-2 pr-4 text-right font-normal">Replies</th>
+                <th className="py-2 text-left font-normal">Notes</th>
               </>
             }
           >
@@ -264,9 +266,10 @@ export default async function OutreachPage({
                 <td className="numeric py-2 pr-4 text-right">
                   {num(Number(d.inmails))}
                 </td>
-                <td className="numeric py-2 text-right">
+                <td className="numeric py-2 pr-4 text-right">
                   {num(Number(d.replies_total))}
                 </td>
+                <td className="py-2 text-muted">{d.notes ?? ''}</td>
               </Row>
             ))}
           </Table>

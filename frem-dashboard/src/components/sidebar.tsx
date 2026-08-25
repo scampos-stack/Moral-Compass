@@ -6,7 +6,8 @@ import { usePathname, useSearchParams } from 'next/navigation'
 const NAV = [
   { href: '/', label: 'Overview', hint: 'Revenue, ATW, insights' },
   { href: '/faire', label: 'Faire', hint: 'Promotions, migration' },
-  { href: '/outreach', label: 'Outreach', hint: 'Woodpecker, LinkedIn' },
+  { href: '/outreach', label: 'Outreach', hint: 'All channels compared' },
+  { href: '/woodpecker', label: 'Woodpecker', hint: 'Sequences, sentiment' },
   { href: '/faire-campaigns', label: 'Faire campaigns', hint: 'Log email sends' },
   { href: '/pipelines', label: 'Pipelines', hint: 'GoHighLevel deals' },
   { href: '/social', label: 'Social', hint: 'Posts by platform' },
@@ -23,7 +24,10 @@ export function Sidebar() {
   const suffix = qs ? `?${qs}` : ''
 
   return (
-    <aside className="w-full shrink-0 border-b border-border md:w-56 md:border-b-0 md:border-r">
+    // Sticky and self-scrolling on desktop, so navigation stays reachable no
+    // matter how far down a long table you are. `self-start` keeps the flex
+    // item from stretching, which would otherwise defeat `sticky`.
+    <aside className="w-full shrink-0 border-b border-border md:sticky md:top-0 md:h-screen md:w-56 md:self-start md:overflow-y-auto md:border-b-0 md:border-r">
       <div className="px-6 py-5">
         <p className="wordmark text-xs text-muted">Frém</p>
         <p className="text-base">Moral Compass</p>
