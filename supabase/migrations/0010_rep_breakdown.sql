@@ -9,7 +9,8 @@
 -- larger than it is. Three buckets are needed, not two: agency, in-house, and
 -- genuinely unattributed.
 
-create or replace view v_rep_revenue with (security_invoker = on) as
+drop view if exists v_rep_revenue cascade;
+create view v_rep_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date         as month,
   coalesce(sales_rep_name, '(untagged)')       as rep,
@@ -24,7 +25,11 @@ order by 1 desc, revenue desc;
 
 -- Monthly, one row per month, with each rep as its own column so the three
 -- buckets can be read side by side.
-create or replace view v_atw_revenue with (security_invoker = on) as
+-- DROP, not CREATE OR REPLACE. This adds other_rep_orders ahead of
+-- untagged_orders, and Postgres treats that as renaming a view column:
+--   42P16: cannot change name of view column
+drop view if exists v_atw_revenue cascade;
+create view v_atw_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date as month,
 

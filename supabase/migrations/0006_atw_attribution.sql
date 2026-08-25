@@ -28,7 +28,10 @@ comment on column orders.sales_rep_name is
 
 -- ── Attributed revenue: tagged vs not ────────────────────────────────────
 
-create or replace view v_atw_revenue with (security_invoker = on) as
+-- DROP first: CREATE OR REPLACE cannot change a view column's name,
+-- order or type (42P16). Dropping makes this safe to re-run.
+drop view if exists v_atw_revenue cascade;
+create view v_atw_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date as month,
   count(*) filter (where sales_rep_name = 'ATW')                    as atw_orders,

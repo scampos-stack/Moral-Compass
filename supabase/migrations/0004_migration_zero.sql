@@ -9,7 +9,10 @@
 -- migrated nobody this month" is a finding, "we don't know" is not. Observed
 -- on 2026-07, which had 3416.25 of revenue and no Faire Direct orders at all.
 
-create or replace view v_migration_rate with (security_invoker = on) as
+-- DROP first: CREATE OR REPLACE cannot change a view column's name,
+-- order or type (42P16). Dropping makes this safe to re-run.
+drop view if exists v_migration_rate cascade;
+create view v_migration_rate with (security_invoker = on) as
 with monthly as (
   select
     date_trunc('month', placed_at)::date as month,

@@ -20,7 +20,10 @@
 -- migrated nobody this month" is a finding, "we don't know" is not. Observed
 -- on 2026-07, which had 3416.25 of revenue and no Faire Direct orders at all.
 
-create or replace view v_migration_rate with (security_invoker = on) as
+-- DROP first: CREATE OR REPLACE cannot change a view column's name,
+-- order or type (42P16). Dropping makes this safe to re-run.
+drop view if exists v_migration_rate cascade;
+create view v_migration_rate with (security_invoker = on) as
 with monthly as (
   select
     date_trunc('month', placed_at)::date as month,
@@ -206,7 +209,10 @@ comment on column orders.sales_rep_name is
 
 -- ── Attributed revenue: tagged vs not ────────────────────────────────────
 
-create or replace view v_atw_revenue with (security_invoker = on) as
+-- DROP first: CREATE OR REPLACE cannot change a view column's name,
+-- order or type (42P16). Dropping makes this safe to re-run.
+drop view if exists v_atw_revenue cascade;
+create view v_atw_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date as month,
   count(*) filter (where sales_rep_name = 'ATW')                    as atw_orders,
@@ -506,7 +512,8 @@ revoke select on v_faire_promotions from anon;
 -- larger than it is. Three buckets are needed, not two: agency, in-house, and
 -- genuinely unattributed.
 
-create or replace view v_rep_revenue with (security_invoker = on) as
+drop view if exists v_rep_revenue cascade;
+create view v_rep_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date         as month,
   coalesce(sales_rep_name, '(untagged)')       as rep,
@@ -521,7 +528,11 @@ order by 1 desc, revenue desc;
 
 -- Monthly, one row per month, with each rep as its own column so the three
 -- buckets can be read side by side.
-create or replace view v_atw_revenue with (security_invoker = on) as
+-- DROP, not CREATE OR REPLACE. This adds other_rep_orders ahead of
+-- untagged_orders, and Postgres treats that as renaming a view column:
+--   42P16: cannot change name of view column
+drop view if exists v_atw_revenue cascade;
+create view v_atw_revenue with (security_invoker = on) as
 select
   date_trunc('month', placed_at)::date as month,
 
