@@ -52,11 +52,42 @@ export default async function ShopifyPage({
   if (window.from) ordersQ = ordersQ.gte('placed_at', window.from)
   if (window.to) ordersQ = ordersQ.lt('placed_at', window.to)
 
-  const [ordersRes, collRes, prodRes] = await Promise.all([
+  const [ordersRes, collRes, prodRes, sessRes] = await Promise.all([
     ordersQ.limit(20000),
     supabase.from('v_collection_sales').select('*').limit(25),
     supabase.from('v_product_sales').select('*').limit(15),
+    supabase
+      .from('shopify_sessions')
+      .select(
+        'utm_source, utm_medium, utm_campaign, referrer_name, referrer_source, landing_path, sessions'
+      )
+      .eq('window_days', 30)
+      .order('sessions', { ascending: false })
+      .limit(200),
   ])
+
+  const sessionRows = (sessRes.data ?? []) as Array<{
+    utm_source: string | null
+    utm_medium: string | null
+    utm_campaign: string | null
+    referrer_name: string | null
+    referrer_source: string | null
+    landing_path: string | null
+    sessions: number
+  }>
+
+  // The three groupings each cover all traffic, so they are kept apart —
+  // combining them would count the same session up to three times.
+  const utmRows = sessionRows.filter((r) => r.utm_source || r.utm_campaign)
+  const refRows = sessionRows.filter(
+    (r) => r.referrer_name !== null || r.referrer_source !== null
+  )
+  const pathRows = sessionRows.filter((r) => r.landing_path !== null)
+
+  const totalSessions = refRows.reduce((a, r) => a + Number(r.sessions), 0)
+  const taggedSessions = utmRows.reduce((a, r) => a + Number(r.sessions), 0)
+  const maxUtm = Math.max(...utmRows.map((r) => Number(r.sessions)), 0)
+  const maxRef = Math.max(...refRows.map((r) => Number(r.sessions)), 0)
 
   const orders = (ordersRes.data ?? []) as Array<{
     id: number
@@ -198,6 +229,88 @@ export default async function ShopifyPage({
           </>
         )}
       </Section>
+
+      {/* ── Traffic ────────────────────────────────────────────────────── */}
+      <Section
+        title="Link clicks by campaign"
+        aside="last 30 days · sessions, not orders"
+      >
+        {utmRows.length === 0 ? (
+          <Empty>
+            No tagged links clicked in the last 30 days. Run a Shopify sync, or
+            add utm_ parameters to your campaign links.
+          </Empty>
+        ) : (
+          <>
+            <div>
+              {utmRows.slice(0, 12).map((r, i) => (
+                <Bar
+                  key={`${r.utm_source}-${r.utm_medium}-${r.utm_campaign}-${i}`}
+                  label={
+                    r.utm_campaign ??
+                    [r.utm_source, r.utm_medium].filter(Boolean).join(' · ')
+                  }
+                  value={Number(r.sessions)}
+                  max={maxUtm}
+                  display={num(Number(r.sessions))}
+                  sub={r.utm_campaign ? (r.utm_source ?? undefined) : undefined}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted">
+              {num(taggedSessions)} of {num(totalSessions)} sessions arrived on
+              a tagged link. These are clicks — Shopify can group sessions by
+              campaign but not sales, so revenue per link is only knowable when
+              a tagged visitor actually orders.
+            </p>
+          </>
+        )}
+      </Section>
+
+      <Section title="Traffic by referrer" aside="last 30 days">
+        {refRows.length === 0 ? (
+          <Empty>No session data. Run a Shopify sync.</Empty>
+        ) : (
+          <div>
+            {refRows.slice(0, 12).map((r, i) => (
+              <Bar
+                key={`${r.referrer_name}-${r.referrer_source}-${i}`}
+                label={
+                  r.referrer_name ?? r.referrer_source ?? 'direct / untagged'
+                }
+                value={Number(r.sessions)}
+                max={maxRef}
+                display={num(Number(r.sessions))}
+                sub={r.referrer_name ? (r.referrer_source ?? undefined) : undefined}
+              />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {pathRows.length > 0 && (
+        <Section title="Where links land" aside="most-visited pages, 30 days">
+          <Table
+            head={
+              <>
+                <th className="py-2 pr-4 text-left font-normal">Page</th>
+                <th className="py-2 text-right font-normal">Sessions</th>
+              </>
+            }
+          >
+            {pathRows.slice(0, 12).map((r, i) => (
+              <Row key={`${r.landing_path}-${i}`}>
+                <td className="max-w-lg truncate py-2 pr-4">
+                  {r.landing_path}
+                </td>
+                <td className="numeric py-2 text-right">
+                  {num(Number(r.sessions))}
+                </td>
+              </Row>
+            ))}
+          </Table>
+        </Section>
+      )}
 
       <Section
         title="Sales by collection"

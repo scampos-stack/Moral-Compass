@@ -1,6 +1,7 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncShopifyCollections } from './detail'
+import { syncShopifyTraffic } from './traffic'
 
 /**
  * Shopify Admin API.
@@ -33,6 +34,7 @@ export type ShopifyResult = {
   directSales: number
   lineItems: number
   collections: number
+  sessions: number
   error?: string
 }
 
@@ -137,6 +139,7 @@ export async function syncShopify(opts: {
     directSales: 0,
     lineItems: 0,
     collections: 0,
+    sessions: 0,
   }
 
   try {
@@ -282,6 +285,16 @@ export async function syncShopify(opts: {
       result.error = `collections skipped: ${
         e instanceof Error ? e.message : String(e)
       }`
+    }
+
+    // Traffic via ShopifyQL. Isolated like collections: sessions are a
+    // bonus signal and must not cost us the order data if analytics is off.
+    try {
+      const t = await syncShopifyTraffic(shop, token, 30)
+      result.sessions = t.sessions
+      if (!t.ok && t.error) result.error = `traffic skipped: ${t.error}`
+    } catch (e) {
+      result.error = `traffic skipped: ${e instanceof Error ? e.message : String(e)}`
     }
 
     result.orders = rows.length

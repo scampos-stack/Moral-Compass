@@ -37,12 +37,22 @@ export default async function Overview({
   if (window.from) shopQ = shopQ.gte('placed_at', window.from)
   if (window.to) shopQ = shopQ.lt('placed_at', window.to)
 
-  const [orders, perfRes, pipeRes, shopRes] = await Promise.all([
+  const [orders, perfRes, pipeRes, shopRes, atwRes] = await Promise.all([
     fetchOrders(window),
     supabase.from('v_channel_performance').select('*'),
     supabase.from('v_ghl_pipeline_summary').select('*'),
     shopQ.limit(5000),
+    supabase.from('v_atw_contribution').select('*').single(),
   ])
+
+  const atw = (atwRes.data ?? null) as {
+    direct_revenue: number
+    direct_orders: number
+    campaign_revenue: number
+    campaign_orders: number
+    campaigns_run: number
+    emails_delivered: number
+  } | null
 
   const shopify = (shopRes.data ?? []) as Array<{
     total_price: number
@@ -117,6 +127,17 @@ export default async function Overview({
     })
   }
 
+  // The Frem pipeline holds existing Faire buyers being nurtured toward
+  // ordering direct. Unlike chain-store deals these carry real values, so
+  // they are the nearest thing to a forward view of migration.
+  const frem = pipelines.find((p) => /frem/i.test(p.pipeline))
+  if (frem && Number(frem.open_value) > 0) {
+    insights.push({
+      title: `${money0(Number(frem.open_value))} of migration pipeline in play`,
+      body: `${num(Number(frem.open_count))} contacts are being nurtured toward ordering direct — existing Faire buyers, so these are the migrations most likely to actually land. Still a forecast, not revenue, until an order arrives.`,
+    })
+  }
+
   const chain = pipelines.find((p) => /chain/i.test(p.pipeline))
   if (chain && Number(chain.open_count) > 0) {
     insights.push({
@@ -163,6 +184,52 @@ export default async function Overview({
           note={money0(s.direct)}
         />
       </section>
+
+      {/* ── What A-Teamwork moved ──────────────────────────────────────── */}
+      {atw && (
+        <Section
+          title="A-Teamwork contribution"
+          aside="two attribution systems, reported separately"
+        >
+          <div className="grid gap-px overflow-hidden border border-border bg-border md:grid-cols-2">
+            <div className="bg-surface p-5">
+              <p className="text-xs uppercase tracking-wider text-muted">
+                Direct — rep-tagged
+              </p>
+              <p className="numeric mt-1 text-3xl leading-none">
+                {money0(Number(atw.direct_revenue))}
+              </p>
+              <p className="mt-2 text-sm text-muted">
+                {num(Number(atw.direct_orders))} Faire orders carrying the ATW
+                sales-rep tag.
+              </p>
+            </div>
+
+            <div className="bg-surface p-5">
+              <p className="text-xs uppercase tracking-wider text-muted">
+                Indirect — Faire campaigns
+              </p>
+              <p className="numeric mt-1 text-3xl leading-none">
+                {money0(Number(atw.campaign_revenue))}
+              </p>
+              <p className="mt-2 text-sm text-muted">
+                {num(Number(atw.campaign_orders))} orders Faire credits to the{' '}
+                {num(Number(atw.campaigns_run))} campaigns A-Teamwork wrote,
+                designed and sent —{' '}
+                {num(Number(atw.emails_delivered))} emails delivered.
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted">
+            Deliberately not added together. The rep tag and Faire&apos;s
+            campaign attribution measure overlapping ground — an order can be
+            both — so one combined headline would double-count an unknown
+            share. Faire never assigns campaign revenue to a rep, which is why
+            the tag alone understates the work.
+          </p>
+        </Section>
+      )}
 
       {/* ── Faire vs Shopify, side by side ─────────────────────────────── */}
       <Section
