@@ -1,5 +1,6 @@
 import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { syncShopifyCollections } from './detail'
 
 /**
  * Shopify Admin API.
@@ -30,6 +31,8 @@ export type ShopifyResult = {
   /** Orders Faire pushed into Shopify — mirrors, not direct sales. */
   faireMirrors: number
   directSales: number
+  lineItems: number
+  collections: number
   error?: string
 }
 
@@ -86,6 +89,17 @@ type ShopifyOrder = {
   referring_site?: string | null
   discount_codes?: Array<{ code?: string }>
   tags?: string
+  line_items?: Array<{
+    id: number
+    product_id?: number | null
+    variant_id?: number | null
+    title?: string
+    variant_title?: string | null
+    sku?: string | null
+    vendor?: string | null
+    quantity?: number
+    price?: string
+  }>
   created_at: string
   updated_at?: string
 }
@@ -121,6 +135,8 @@ export async function syncShopify(opts: {
     windowLimited: false,
     faireMirrors: 0,
     directSales: 0,
+    lineItems: 0,
+    collections: 0,
   }
 
   try {
@@ -133,6 +149,30 @@ export async function syncShopify(opts: {
       `?status=any&limit=250&order=created_at%20asc`
 
     const rows: Array<Record<string, unknown>> = []
+    const lineRows: Array<Record<string, unknown>> = []
+
+    /**
+     * Pulls utm_* out of the landing path. Shopify stores landing_site as a
+     * path plus query ("/collections/x?utm_source=..."), so it is parsed
+     * against a dummy origin rather than as an absolute URL.
+     */
+    const readUtm = (landing?: string | null) => {
+      const out: Record<string, string | null> = {
+        utm_source: null,
+        utm_medium: null,
+        utm_campaign: null,
+        utm_content: null,
+        utm_term: null,
+      }
+      if (!landing || !landing.includes('?')) return out
+      try {
+        const q = new URL(landing, 'https://x.invalid').searchParams
+        for (const k of Object.keys(out)) out[k] = q.get(k)
+      } catch {
+        // A malformed landing_site must not fail the whole sync.
+      }
+      return out
+    }
 
     while (url && result.pages < maxPages) {
       const res: Response = await fetch(url, {
@@ -176,10 +216,27 @@ export async function syncShopify(opts: {
             .map((d) => d.code?.trim())
             .filter((c): c is string => Boolean(c)),
           tags: o.tags ?? null,
+          ...readUtm(o.landing_site),
           placed_at: o.created_at,
           updated_at: o.updated_at ?? null,
           synced_at: new Date().toISOString(),
         })
+
+        for (const li of o.line_items ?? []) {
+          lineRows.push({
+            id: li.id,
+            order_id: o.id,
+            product_id: li.product_id ?? null,
+            variant_id: li.variant_id ?? null,
+            title: li.title ?? null,
+            variant_title: li.variant_title ?? null,
+            sku: li.sku ?? null,
+            vendor: li.vendor ?? null,
+            quantity: li.quantity ?? 0,
+            price: li.price ?? '0',
+            synced_at: new Date().toISOString(),
+          })
+        }
       }
 
       url = nextPageUrl(res.headers.get('link'))
@@ -205,6 +262,26 @@ export async function syncShopify(opts: {
       else if (src !== 'shopify_draft_order' && !r.test && !r.cancelled_at) {
         result.directSales += 1
       }
+    }
+
+    // Line items after orders — they carry a foreign key to them.
+    for (let i = 0; i < lineRows.length; i += 500) {
+      const { error } = await supabase
+        .from('shopify_line_items')
+        .upsert(lineRows.slice(i, i + 500), { onConflict: 'id' })
+      if (error) throw new Error(`line items: ${error.message}`)
+    }
+    result.lineItems = lineRows.length
+
+    // Collections change rarely and cost ~120 sequential calls, so a failure
+    // here must not discard the orders already written.
+    try {
+      const c = await syncShopifyCollections(shop, token)
+      result.collections = c.collections
+    } catch (e) {
+      result.error = `collections skipped: ${
+        e instanceof Error ? e.message : String(e)
+      }`
     }
 
     result.orders = rows.length

@@ -4,6 +4,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { Freshness } from "@/components/freshness";
+import { Topbar } from "@/components/topbar";
+import { themeScript } from "@/components/theme-toggle";
+import { isUnlocked } from "@/lib/edit-gate";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,12 +23,20 @@ export const metadata: Metadata = {
   description: "Wholesale outreach and revenue for Frém",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const unlocked = await isUnlocked();
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Applies the saved theme before first paint, so a dark-mode user
+            never sees a white flash on load. */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-full">
         <div className="flex min-h-screen flex-col md:flex-row">
           {/* useSearchParams needs a Suspense boundary during prerender. */}
@@ -33,6 +44,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Sidebar />
           </Suspense>
           <div className="min-w-0 flex-1">
+            <Topbar unlocked={unlocked} />
             <Suspense fallback={null}>
               <Freshness />
             </Suspense>

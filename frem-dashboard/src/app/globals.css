@@ -3,7 +3,11 @@
 /* Frém identity is black and white — the wordmark is a high-contrast serif with
    wide tracking, and all campaign colour lives in photography, never in chrome.
    The UI stays monochrome so product imagery is the only thing that carries
-   colour. The single accent below is reserved for destructive states. */
+   colour. The single accent below is reserved for destructive states.
+
+   Three theme states: an explicit choice stamps data-theme on <html>, and the
+   default (no attribute) follows the operating system. Every token is defined
+   on bare :root first, so nothing depends on a media query having matched. */
 
 :root {
   --background: #ffffff;
@@ -14,8 +18,8 @@
   --border: #e5e5e5;
   --muted: #737373;
 
-  /* Trend indicators. Weight and glyph carry the meaning; these are near-black
-     and near-grey so the palette holds even when printed or screenshotted. */
+  /* Trend and emphasis steps. Weight and glyph carry meaning; these stay
+     near-black and near-grey so the palette holds in greyscale print. */
   --up: #0a0a0a;
   --down: #737373;
   --flat: #a3a3a3;
@@ -23,8 +27,9 @@
   --danger: #b91c1c;
 }
 
+/* System preference — skipped when the user has explicitly chosen light. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0a0a0a;
     --foreground: #fafafa;
 
@@ -39,6 +44,23 @@
 
     --danger: #f87171;
   }
+}
+
+/* Explicit choice wins in both directions. */
+:root[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+
+  --surface: #141414;
+  --surface-muted: #1c1c1c;
+  --border: #2a2a2a;
+  --muted: #a3a3a3;
+
+  --up: #fafafa;
+  --down: #a3a3a3;
+  --flat: #525252;
+
+  --danger: #f87171;
 }
 
 @theme inline {

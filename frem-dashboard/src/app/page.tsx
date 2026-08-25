@@ -30,11 +30,35 @@ export default async function Overview({
   const { range, from, to, window } = await readRange(searchParams)
   const supabase = createReadClient()
 
-  const [orders, perfRes, pipeRes] = await Promise.all([
+  let shopQ = supabase
+    .from('shopify_orders')
+    .select('total_price, placed_at, utm_campaign, utm_source, referring_site')
+    .eq('is_direct_sale', true)
+  if (window.from) shopQ = shopQ.gte('placed_at', window.from)
+  if (window.to) shopQ = shopQ.lt('placed_at', window.to)
+
+  const [orders, perfRes, pipeRes, shopRes] = await Promise.all([
     fetchOrders(window),
     supabase.from('v_channel_performance').select('*'),
     supabase.from('v_ghl_pipeline_summary').select('*'),
+    shopQ.limit(5000),
   ])
+
+  const shopify = (shopRes.data ?? []) as Array<{
+    total_price: number
+    placed_at: string
+    utm_campaign: string | null
+    utm_source: string | null
+    referring_site: string | null
+  }>
+
+  const shopifyRevenue = shopify.reduce((s, o) => s + Number(o.total_price), 0)
+  // "Attributed" = traceable to a link, campaign or referrer we control.
+  // Everything else landed with no signal at all and is counted as untracked
+  // rather than quietly credited to the site.
+  const shopifyAttributed = shopify
+    .filter((o) => o.utm_campaign || o.utm_source || o.referring_site)
+    .reduce((s, o) => s + Number(o.total_price), 0)
 
   const s = summarise(orders)
   const months = byMonth(orders)
@@ -139,6 +163,67 @@ export default async function Overview({
           note={money0(s.direct)}
         />
       </section>
+
+      {/* ── Faire vs Shopify, side by side ─────────────────────────────── */}
+      <Section
+        title="Faire vs Shopify"
+        aside="marketplace at 15% against the channel you own"
+      >
+        <div className="grid gap-px overflow-hidden border border-border bg-border md:grid-cols-2">
+          <div className="bg-surface p-5">
+            <p className="text-xs uppercase tracking-wider text-muted">
+              Faire marketplace
+            </p>
+            <p className="numeric mt-1 text-3xl leading-none">
+              {money0(s.revenue)}
+            </p>
+            <dl className="mt-4 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-muted">Orders</dt>
+                <dd className="numeric">{num(s.orders)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-muted">Commission paid</dt>
+                <dd className="numeric">{money0(s.commission)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-muted">You keep</dt>
+                <dd className="numeric">{money0(s.payout)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="bg-surface p-5">
+            <p className="text-xs uppercase tracking-wider text-muted">
+              Shopify direct
+            </p>
+            <p className="numeric mt-1 text-3xl leading-none">
+              {money0(shopifyRevenue)}
+            </p>
+            <dl className="mt-4 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-muted">Orders</dt>
+                <dd className="numeric">{num(shopify.length)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-muted">Commission paid</dt>
+                <dd className="numeric">$0</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-muted">Attributed to a link</dt>
+                <dd className="numeric">{money0(shopifyAttributed)}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+
+        <p className="text-xs text-muted">
+          Shopify excludes the orders Faire mirrors into it — those are
+          marketplace sales, not owned-channel revenue. Migrating{' '}
+          {money0(s.revenue)} of marketplace revenue to direct would keep the{' '}
+          {money0(s.commission)} currently paid in commission.
+        </p>
+      </Section>
 
       <Section
         title="Revenue by month"
