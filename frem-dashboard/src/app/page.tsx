@@ -94,10 +94,10 @@ export default async function Overview({
   }
 
   const chain = pipelines.find((p) => /chain/i.test(p.pipeline))
-  if (chain && Number(chain.open_value) === 0 && Number(chain.open_count) > 0) {
+  if (chain && Number(chain.open_count) > 0) {
     insights.push({
-      title: 'Chain Store pipeline has deals but no values',
-      body: `${num(Number(chain.open_count))} open opportunities, all at $0. LinkedIn revenue is recorded here, so it will read as zero until amounts are entered.`,
+      title: `${num(Number(chain.open_count))} chain-store deals in play`,
+      body: 'Values are TBD and individually large, so they are counted but never valued here — a speculative six-figure deal sitting beside real revenue is how a forecast gets read as earnings. These land as revenue only when a Faire order actually arrives.',
     })
   }
 

@@ -58,6 +58,14 @@ export default async function PipelinesPage({
   const totalOpps = pipelines.reduce((a, p) => a + Number(p.opportunities), 0)
   const totalWonCount = pipelines.reduce((a, p) => a + Number(p.won_count), 0)
 
+  // Chain-store deals are individually large and their values are TBD, so
+  // they are counted and never valued. Summing a handful of speculative
+  // six-figure deals next to real revenue is how a forecast gets mistaken
+  // for earnings — the count is the honest figure to show.
+  const isProspective = (name: string) => /chain/i.test(name)
+  const chain = pipelines.filter((p) => isProspective(p.pipeline))
+  const chainCount = chain.reduce((a, p) => a + Number(p.open_count), 0)
+
   // Funnel grouped by pipeline, so each pipeline scales to its own biggest
   // stage — sharing one scale would flatten the smaller pipelines to nothing.
   const byPipeline = new Map<string, typeof funnel>()
@@ -80,20 +88,39 @@ export default async function PipelinesPage({
         <Stat
           label="Opportunities"
           value={num(totalOpps)}
-          note={`${pipelines.length} pipelines`}
+          note={`across ${pipelines.length} pipelines`}
         />
-        <Stat label="Open value" value={money0(totalOpen)} note="not revenue" />
+        <Stat
+          label="Open value"
+          value={money0(totalOpen)}
+          note="forecast, not revenue"
+        />
         <Stat
           label="Won value"
           value={money0(totalWon)}
           note={`${num(totalWonCount)} deals`}
         />
         <Stat
-          label="Pipelines"
-          value={num(pipelines.length)}
-          note="in GoHighLevel"
+          label="Chain-store deals"
+          value={num(chainCount)}
+          note="value TBD — deliberately unvalued"
         />
       </section>
+
+      {chainCount > 0 && (
+        <div className="border-l-2 border-foreground pl-4">
+          <p className="text-sm font-medium">
+            Chain-store deals are counted, never valued
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            {num(chainCount)} are in play. Each is individually large and its
+            value is still TBD, so putting a number on them here would place
+            millions of speculative pipeline beside real revenue — and that is
+            how a forecast ends up read as earnings in a client report. They
+            appear as revenue only when a Faire order actually lands.
+          </p>
+        </div>
+      )}
 
       <Section
         title="By pipeline"
@@ -145,15 +172,11 @@ export default async function PipelinesPage({
           </Table>
         )}
 
-        {pipelines.some(
-          (p) => /chain/i.test(p.pipeline) && Number(p.open_value) === 0
-        ) && (
-          <p className="text-xs text-muted">
-            Chain Store carries no deal values. LinkedIn revenue is recorded
-            here, so it reads as zero until amounts are entered on those
-            opportunities.
-          </p>
-        )}
+        <p className="text-xs text-muted">
+          Open value is a forecast of deals not yet closed. It is never added
+          to revenue anywhere in this dashboard, and chain-store rows are
+          left unvalued on purpose.
+        </p>
       </Section>
 
       <Section title="Where open deals sit" aside="each pipeline scaled to itself">
