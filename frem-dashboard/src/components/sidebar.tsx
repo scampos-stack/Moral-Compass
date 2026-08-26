@@ -10,6 +10,7 @@ const NAV: readonly Item[] = [
   { href: '/faire', label: 'Faire', hint: 'Promotions, migration' },
   { href: '/shopify', label: 'Shopify', hint: 'Direct, collections, UTM' },
   { href: '/outreach', label: 'Outreach', hint: 'All channels compared' },
+  { href: '/campaigns', label: 'Campaign links', hint: 'Clicks, tagging, conversion' },
   { href: '/woodpecker', label: 'Woodpecker', hint: 'Sequences, sentiment' },
   { href: '/faire-campaigns', label: 'Faire campaigns', hint: 'Log email sends' },
   { href: '/pipelines', label: 'Pipelines', hint: 'GoHighLevel deals' },

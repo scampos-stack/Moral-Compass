@@ -19,6 +19,7 @@ function revalidateAll() {
     '/woodpecker',
     '/pipelines',
     '/social',
+    '/campaigns',
     '/inventory',
     '/sync',
   ]) {

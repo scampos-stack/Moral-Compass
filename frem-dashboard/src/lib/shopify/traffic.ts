@@ -22,6 +22,8 @@ export type TrafficResult = {
   ok: boolean
   rows: number
   sessions: number
+  /** Rows in the 365-day monthly campaign series. */
+  campaignRows: number
   error?: string
 }
 
@@ -80,7 +82,7 @@ export async function syncShopifyTraffic(
   windowDays = 30
 ): Promise<TrafficResult> {
   const supabase = createAdminClient()
-  const result: TrafficResult = { ok: false, rows: 0, sessions: 0 }
+  const result: TrafficResult = { ok: false, rows: 0, sessions: 0, campaignRows: 0 }
   const since = `-${windowDays}d`
 
   try {
@@ -143,6 +145,39 @@ export async function syncShopifyTraffic(
       })
     }
 
+    // A twelve-month series by campaign, so an active link has a shape and
+    // not just a total. Kept in its own table rather than as more rows in
+    // shopify_sessions: that table is a point-in-time aggregate keyed by
+    // window, and adding a month column to its unique constraint would
+    // change the meaning of every row already in it.
+    //
+    // Empty string, never null, for the three utm columns — they are primary
+    // key columns downstream, and a null in a key makes every upsert insert
+    // a duplicate instead of updating.
+    const series = (
+      await shopifyql(
+        shop,
+        token,
+        'FROM sessions SHOW sessions GROUP BY month, utm_campaign, utm_source, utm_medium SINCE -365d ORDER BY month DESC LIMIT 1000'
+      )
+    ).map((r) => ({
+      month: String(r.month ?? '').slice(0, 10),
+      utm_source: r.utm_source ?? '',
+      utm_medium: r.utm_medium ?? '',
+      utm_campaign: r.utm_campaign ?? '',
+      sessions: n(r.sessions),
+      captured_at: new Date().toISOString(),
+    })).filter((r) => r.month.length === 10)
+
+    for (let i = 0; i < series.length; i += 250) {
+      const { error } = await supabase
+        .from('shopify_campaign_sessions')
+        .upsert(series.slice(i, i + 250), {
+          onConflict: 'month,utm_source,utm_medium,utm_campaign',
+        })
+      if (error) throw new Error(`campaign series: ${error.message}`)
+    }
+    result.campaignRows = series.length
     for (let i = 0; i < rows.length; i += 250) {
       const { error } = await supabase
         .from('shopify_sessions')
