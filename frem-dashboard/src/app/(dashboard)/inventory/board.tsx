@@ -5,15 +5,12 @@ import {
   markOrdered,
   markReceived,
   clearReorder,
-  claimNaming,
-  releaseNaming,
-  namingItems,
   type ActionState,
-  type NamingItem,
 } from './actions'
 import { OrderLog } from './order-log'
 import { toCsv, download, stamp } from './csv'
 import { ACTIONABLE } from './severity'
+import { NamingTableRow } from './naming-row'
 
 export type ReorderState = {
   status: 'ordered' | 'received'
@@ -356,7 +353,6 @@ export function Board({
                     header that scrolls away leaves seven unlabelled columns. */}
                 <thead className="sticky top-0 z-10 bg-background">
                   <tr className="border-b border-border text-xs uppercase tracking-wider text-muted">
-                    <th className="w-8 py-2" />
                     <th className="py-2 pr-4 text-left font-normal">Where</th>
                     <th className="py-2 pr-4 text-left font-normal">Typed as</th>
                     <th className="py-2 pr-4 text-right font-normal">
@@ -572,6 +568,17 @@ function ReorderRow({
                 )}
               </p>
 
+              {/* An order with no PO reference may never have actually been
+                  placed with the supplier — someone recorded the intent and
+                  moved on. Derived rather than stored as a status: it is
+                  simply whether the field is empty, and a second source of
+                  truth for that would only drift from the field itself. */}
+              {!r.state.po_number && (
+                <p className="text-danger">
+                  No PO recorded — was this order actually placed?
+                </p>
+              )}
+
               {/* Arrival is inferred from the count rising above where it was
                   when the order was placed — never from an absolute level,
                   which misreads a returned unit as a delivery. Inference is
@@ -660,198 +667,5 @@ function ReorderRow({
         </div>
       </div>
     </li>
-  )
-}
-
-function NamingTableRow({
-  row: n,
-  unlocked,
-  pending,
-  run,
-}: {
-  row: NamingRow
-  unlocked: boolean
-  pending: boolean
-  run: (
-    fn: (prev: ActionState, fd: FormData) => Promise<ActionState>,
-    fd: FormData
-  ) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [items, setItems] = useState<NamingItem[] | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const fd = () => {
-    const f = new FormData()
-    f.set('scope', n.scope)
-    f.set('norm_key', n.norm_key)
-    return f
-  }
-
-  // Loaded once per row and kept, so collapsing and reopening a large issue
-  // does not re-fetch 500 rows.
-  const toggle = async () => {
-    const next = !open
-    setOpen(next)
-    if (next && items === null) {
-      setLoading(true)
-      setItems(await namingItems(n.scope, n.norm_key))
-      setLoading(false)
-    }
-  }
-
-  const exportItems = () => {
-    if (!items?.length) return
-    download(
-      `frem-naming-${n.scope.toLowerCase().replace(/\W+/g, '-')}-${n.norm_key
-        .toLowerCase()
-        .replace(/\W+/g, '-')}-${stamp()}.csv`,
-      toCsv(
-        ['Typed as', 'SKU', 'Product', 'Variant', 'On hand'],
-        items.map((i) => [
-          i.typed_as,
-          i.sku,
-          i.product_title,
-          i.variant_title,
-          i.available,
-        ])
-      )
-    )
-  }
-
-  const held = daysSince(n.claim?.claimed_at ?? null)
-  // Claimed and still here after three days is the accountability signal.
-  // Anything shorter is just work in progress.
-  const stale = n.claim !== null && held !== null && held >= 3
-
-  return (
-    <>
-      <tr className="border-b border-border transition-colors hover:bg-surface-muted">
-        <td className="py-2 align-top">
-          <button
-            type="button"
-            onClick={toggle}
-            aria-expanded={open}
-            aria-label={open ? 'Hide affected items' : 'Show affected items'}
-            className="px-1 text-muted transition-colors hover:text-foreground"
-          >
-            {open ? '▾' : '▸'}
-          </button>
-        </td>
-        <td className="whitespace-nowrap py-2 pr-4 align-top text-muted">
-          {n.scope}
-        </td>
-        <td className="py-2 pr-4 align-top">
-          <span className="flex flex-wrap gap-1.5">
-            {n.variants_seen.map((v) => (
-              <code
-                key={v}
-                className="border border-border px-1.5 py-0.5 text-xs"
-              >
-                {v}
-              </code>
-            ))}
-          </span>
-        </td>
-        <td className="numeric py-2 pr-4 text-right align-top text-danger">
-          {n.spellings}
-        </td>
-        <td className="numeric py-2 pr-4 text-right align-top">
-          {num(n.affected_variants)}
-        </td>
-        <td className="py-2 pr-4 align-top text-xs">
-          {n.claim ? (
-            <span className={stale ? 'text-danger' : 'text-muted'}>
-              {n.claim.actor.split('@')[0]}
-              <br />
-              {ago(n.claim.claimed_at)}
-              {stale && ' · not fixed'}
-            </span>
-          ) : (
-            <span className="text-muted">unclaimed</span>
-          )}
-        </td>
-        <td className="py-2 text-right align-top">
-          {unlocked && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => run(n.claim ? releaseNaming : claimNaming, fd())}
-              className="border border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground disabled:opacity-40"
-            >
-              {n.claim ? 'Release' : 'Claim'}
-            </button>
-          )}
-        </td>
-      </tr>
-
-      {open && (
-        <tr className="border-b border-border">
-          <td />
-          <td colSpan={6} className="py-3 pr-4">
-            {loading ? (
-              <p className="text-xs text-muted">Loading affected items…</p>
-            ) : !items?.length ? (
-              <p className="text-xs text-muted">
-                No items returned. Apply the 0019 migration if this is new.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs text-muted">
-                    {num(items.length)} of {num(n.affected_variants)} shown
-                    {items.length < n.affected_variants && ' — capped at 500'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={exportItems}
-                    className="border border-border px-2 py-1 text-[10px] uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground"
-                  >
-                    CSV of these items
-                  </button>
-                </div>
-                <div className="max-h-72 overflow-y-auto border border-border">
-                  <table className="w-full border-collapse text-xs">
-                    <thead className="sticky top-0 bg-surface">
-                      <tr className="border-b border-border text-left uppercase tracking-wider text-muted">
-                        <th className="px-2 py-1.5 font-normal">Typed as</th>
-                        <th className="px-2 py-1.5 font-normal">SKU</th>
-                        <th className="px-2 py-1.5 font-normal">Product</th>
-                        <th className="px-2 py-1.5 text-right font-normal">
-                          On hand
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((i, idx) => (
-                        <tr
-                          key={`${i.sku}-${idx}`}
-                          className="border-b border-border last:border-0"
-                        >
-                          <td className="px-2 py-1.5">
-                            <code className="border border-border px-1">
-                              {i.typed_as}
-                            </code>
-                          </td>
-                          <td className="numeric px-2 py-1.5">
-                            {i.sku ?? '—'}
-                          </td>
-                          <td className="max-w-md truncate px-2 py-1.5">
-                            {i.product_title ?? '—'}
-                          </td>
-                          <td className="numeric px-2 py-1.5 text-right">
-                            {num(i.available)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
   )
 }
