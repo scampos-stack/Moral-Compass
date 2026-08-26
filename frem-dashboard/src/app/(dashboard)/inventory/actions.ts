@@ -174,3 +174,40 @@ export async function releaseNaming(
   refresh()
   return { ok: true, message: 'Released.' }
 }
+
+/* ── Drill-down ──────────────────────────────────────────────────────── */
+
+export type NamingItem = {
+  typed_as: string
+  sku: string | null
+  product_title: string | null
+  variant_title: string | null
+  available: number
+}
+
+/**
+ * The items behind one naming warning.
+ *
+ * Fetched on demand rather than with the page: the largest single issue
+ * covers 3,693 variants, and shipping every issue's items up front would
+ * mean tens of thousands of rows for a panel most of which stays collapsed.
+ *
+ * Read-only, so it is not behind the edit gate — seeing which SKUs need
+ * renaming is exactly what someone should be able to do before they have
+ * the code to claim it.
+ */
+export async function namingItems(
+  scope: string,
+  normKey: string,
+  limit = 500
+): Promise<NamingItem[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('v_naming_issue_items')
+    .select('typed_as, sku, product_title, variant_title, available')
+    .eq('scope', scope)
+    .eq('norm_key', normKey)
+    .limit(limit)
+  if (error) return []
+  return (data ?? []) as NamingItem[]
+}
