@@ -21,6 +21,14 @@ export type ReorderState = {
   ordered_at: string | null
   received_at: string | null
   actor: string
+  expected_at: string | null
+  po_number: string | null
+  /** Units on hand when the order was placed, for detecting an arrival. */
+  available_at_order: number | null
+  /** available − available_at_order. Positive means the shelf grew. */
+  stock_delta: number | null
+  /** Days past expected_at. Null when no date was given. */
+  days_late: number | null
 }
 
 export type Row = {
@@ -64,15 +72,14 @@ const ago = (iso: string | null) => {
 /**
  * Buying board.
  *
- * Panels stack full width rather than sitting in columns. Both carry long
- * text — product titles, and every spelling of a colour — and a third of the
- * screen truncated most of it. Full width also lets the naming panel be a
- * real table with an expandable list of affected items, which is what the
- * person doing the renaming actually needs.
+ * Reorder and naming sit side by side and each scrolls inside itself, so
+ * both headline numbers are visible in one screenful and the page height
+ * does not grow with the row count. Seeing that a cleanup backlog exists at
+ * the same time as the buying list is the entire point; stacking them meant
+ * scrolling past 261 rows to discover the second one.
  *
- * Either panel can be expanded to fill the view when the other is in the
- * way, and both export to CSV for anyone who would rather work in a
- * spreadsheet.
+ * Either panel expands to the full width when a single list is the job, and
+ * both export to CSV for anyone who would rather work in a spreadsheet.
  */
 export function Board({
   rows,
@@ -153,6 +160,10 @@ export function Board({
           'Ordered qty',
           'Ordered by',
           'Ordered at',
+          'PO number',
+          'Expected at',
+          'Days late',
+          'Stock since order',
           'Stock hiding',
         ],
         visible.map((r) => [
@@ -168,6 +179,12 @@ export function Board({
           r.state?.ordered_qty ?? '',
           r.state?.actor ?? '',
           r.state?.ordered_at?.slice(0, 10) ?? '',
+          r.state?.po_number ?? '',
+          r.state?.expected_at ?? '',
+          r.state?.days_late != null && r.state.days_late > 0
+            ? r.state.days_late
+            : '',
+          r.state?.stock_delta ?? '',
           r.masked ? `${r.masked.sku_total} units on ${r.masked.sharing} variants` : '',
         ])
       )
@@ -472,6 +489,15 @@ function ReorderRow({
   // precisely because the rate is only 60 days deep.
   const suggested = r.units_60d > 0 ? Math.max(r.units_60d, 6) : 12
   const [qty, setQty] = useState(String(suggested))
+  // Default expected arrival: three weeks out. A date that is merely a guess
+  // is still far better than none — it is what the late alert measures
+  // against, and it can be edited before the order is recorded.
+  const [expected, setExpected] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 21)
+    return d.toISOString().slice(0, 10)
+  })
+  const [po, setPo] = useState('')
 
   const fd = (extra: Record<string, string> = {}) => {
     const f = new FormData()
@@ -529,15 +555,44 @@ function ReorderRow({
           )}
 
           {r.state?.status === 'ordered' && (
-            <p className="mt-1 text-xs text-muted">
-              {r.state.ordered_qty
-                ? `${num(r.state.ordered_qty)} ordered`
-                : 'Ordered'}{' '}
-              {ago(r.state.ordered_at)} by {r.state.actor}
-              {r.available > 5 && (
-                <span className="text-foreground"> · stock has arrived</span>
+            <div className="mt-1 space-y-1 text-xs">
+              <p className="text-muted">
+                {r.state.ordered_qty
+                  ? `${num(r.state.ordered_qty)} ordered`
+                  : 'Ordered'}{' '}
+                {ago(r.state.ordered_at)} by {r.state.actor}
+                {r.state.po_number && (
+                  <span className="numeric"> · PO {r.state.po_number}</span>
+                )}
+                {r.state.expected_at && (
+                  <span className="numeric">
+                    {' '}
+                    · due {r.state.expected_at}
+                  </span>
+                )}
+              </p>
+
+              {/* Arrival is inferred from the count rising above where it was
+                  when the order was placed — never from an absolute level,
+                  which misreads a returned unit as a delivery. Inference is
+                  why this asks for confirmation instead of closing itself. */}
+              {(r.state.stock_delta ?? 0) > 0 ? (
+                <p className="text-foreground">
+                  Stock rose {num(r.state.stock_delta ?? 0)} since ordering
+                  {r.state.available_at_order !== null &&
+                    ` (${num(r.state.available_at_order)} → ${num(r.available)})`}{' '}
+                  — confirm it was this delivery.
+                </p>
+              ) : (
+                r.state.days_late !== null &&
+                r.state.days_late > 0 && (
+                  <p className="text-danger">
+                    {r.state.days_late}d past the expected date and nothing has
+                    been registered. Stock is still {num(r.available)}.
+                  </p>
+                )
               )}
-            </p>
+            </div>
           )}
         </div>
 
@@ -573,10 +628,29 @@ function ReorderRow({
                 aria-label={`Quantity to order for ${r.sku ?? r.variant_id}`}
                 className="numeric w-16 border border-border bg-transparent px-2 py-1.5 text-right text-xs outline-none focus:border-foreground"
               />
+              <input
+                type="date"
+                value={expected}
+                onChange={(e) => setExpected(e.target.value)}
+                title="Expected arrival — leaves a date to chase against"
+                aria-label={`Expected arrival for ${r.sku ?? r.variant_id}`}
+                className="numeric w-32 border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus:border-foreground"
+              />
+              <input
+                type="text"
+                value={po}
+                onChange={(e) => setPo(e.target.value)}
+                placeholder="PO #"
+                title="Supplier order number, so this row can be matched to the paperwork"
+                aria-label={`Purchase order number for ${r.sku ?? r.variant_id}`}
+                className="numeric w-20 border border-border bg-transparent px-2 py-1.5 text-xs outline-none placeholder:text-muted focus:border-foreground"
+              />
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => run(markOrdered, fd({ qty }))}
+                onClick={() =>
+                  run(markOrdered, fd({ qty, expected_at: expected, po_number: po }))
+                }
                 className="bg-foreground px-2.5 py-1.5 text-xs uppercase tracking-wider text-background transition-opacity hover:opacity-80 disabled:opacity-40"
               >
                 Ordered

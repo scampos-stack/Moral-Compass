@@ -42,7 +42,23 @@ export async function markOrdered(
   // from "ordered nothing".
   const qty = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null
 
+  const expected = String(formData.get('expected_at') ?? '').trim()
+  if (expected && !/^\d{4}-\d{2}-\d{2}$/.test(expected)) {
+    return { ok: false, message: 'Expected date must be a real date.' }
+  }
+
   const supabase = createAdminClient()
+
+  // Read the shelf as it is right now, server-side rather than trusting a
+  // number posted from the browser. This is the baseline every later
+  // "has it arrived" check compares against, so a stale or edited value
+  // would make deliveries appear or vanish.
+  const { data: current } = await supabase
+    .from('shopify_inventory')
+    .select('available')
+    .eq('variant_id', variantId)
+    .maybeSingle()
+
   const { error } = await supabase.from('inventory_reorder').upsert(
     {
       variant_id: variantId,
@@ -50,6 +66,9 @@ export async function markOrdered(
       ordered_qty: qty,
       ordered_at: new Date().toISOString(),
       received_at: null,
+      expected_at: expected || null,
+      po_number: String(formData.get('po_number') ?? '').trim() || null,
+      available_at_order: current?.available ?? null,
       actor: who,
       updated_at: new Date().toISOString(),
       note: String(formData.get('note') ?? '') || null,
@@ -59,7 +78,12 @@ export async function markOrdered(
   if (error) return { ok: false, message: error.message }
 
   refresh()
-  return { ok: true, message: qty ? `Ordered ${qty}.` : 'Marked as ordered.' }
+  return {
+    ok: true,
+    message:
+      (qty ? `Ordered ${qty}` : 'Marked as ordered') +
+      (expected ? `, expected ${expected}.` : '.'),
+  }
 }
 
 /** Closes a purchase order once the goods land. */

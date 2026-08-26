@@ -8,11 +8,15 @@ import type { Row } from './board'
  * Deliberately always visible rather than living inside the "On order" tab:
  * the point of a log is that nobody has to go looking for it.
  *
- * Five days is the overdue line — long enough that a same-week delivery is
- * not nagged, short enough that a forgotten purchase order surfaces while
- * the buyer can still chase it. Overdue is measured from the order date and
- * is NOT cleared by stock arriving, because a delivery nobody confirmed is
- * exactly the case worth showing.
+ * Lateness prefers the expected arrival date when the buyer gave one, since
+ * that is the real promise to chase against. Five days from the order date
+ * is only the fallback for rows with no date — long enough that a same-week
+ * delivery is not nagged, short enough that a forgotten order still
+ * surfaces.
+ *
+ * Late is NOT cleared by stock arriving, because a delivery nobody confirmed
+ * is exactly the case worth showing. A row where the count has risen is
+ * marked "arrived?" instead, and still waits for a human to close it.
  */
 
 const OVERDUE_DAYS = 5
@@ -34,9 +38,25 @@ export function OrderLog({ rows }: { rows: Row[] }) {
   if (rows.length === 0) return null
 
   const withAge = rows
-    .map((r) => ({ r, age: daysSince(r.state?.ordered_at ?? null) ?? 0 }))
-    .sort((a, b) => b.age - a.age)
-  const overdue = withAge.filter((x) => x.age >= OVERDUE_DAYS)
+    .map((r) => {
+      const age = daysSince(r.state?.ordered_at ?? null) ?? 0
+      const arrived = (r.state?.stock_delta ?? 0) > 0
+      // days_late is null when no expected date was set, and only then does
+      // the age-based fallback apply.
+      const late =
+        !arrived &&
+        (r.state?.days_late !== null && r.state?.days_late !== undefined
+          ? r.state.days_late > 0
+          : age >= OVERDUE_DAYS)
+      const lateBy =
+        r.state?.days_late !== null && r.state?.days_late !== undefined
+          ? r.state.days_late
+          : age - OVERDUE_DAYS + 1
+      return { r, age, arrived, late, lateBy }
+    })
+    .sort((a, b) => Number(b.late) - Number(a.late) || b.age - a.age)
+  const overdue = withAge.filter((x) => x.late)
+  const arrived = withAge.filter((x) => x.arrived)
 
   return (
     <div className="border border-border">
@@ -44,20 +64,22 @@ export function OrderLog({ rows }: { rows: Row[] }) {
         <span className="text-xs uppercase tracking-wider text-muted">
           Order log
         </span>
-        {overdue.length > 0 ? (
-          <span className="text-xs text-danger">
-            {num(overdue.length)} not received after {OVERDUE_DAYS} days
-          </span>
-        ) : (
-          <span className="numeric text-xs text-muted">
-            {num(rows.length)} open
-          </span>
-        )}
+        <span className="flex flex-wrap items-baseline gap-3 text-xs">
+          {arrived.length > 0 && (
+            <span className="text-foreground">
+              {num(arrived.length)} arrived, unconfirmed
+            </span>
+          )}
+          {overdue.length > 0 ? (
+            <span className="text-danger">{num(overdue.length)} late</span>
+          ) : (
+            <span className="numeric text-muted">{num(rows.length)} open</span>
+          )}
+        </span>
       </div>
 
       <ul className="max-h-44 divide-y divide-border overflow-y-auto">
-        {withAge.map(({ r, age }) => {
-          const late = age >= OVERDUE_DAYS
+        {withAge.map(({ r, arrived, late, lateBy }) => {
           return (
             <li
               key={r.variant_id}
@@ -77,9 +99,19 @@ export function OrderLog({ rows }: { rows: Row[] }) {
                 {' · '}
                 {r.product_title ?? r.sku ?? 'unknown'}
               </span>
-              <span className={late ? 'text-danger' : 'text-muted'}>
-                {ago(r.state?.ordered_at ?? null)}
-                {late && ` · overdue ${age - OVERDUE_DAYS + 1}d`}
+              <span
+                className={
+                  late ? 'text-danger' : arrived ? 'text-foreground' : 'text-muted'
+                }
+              >
+                {r.state?.po_number && (
+                  <span className="numeric">PO {r.state.po_number} · </span>
+                )}
+                {r.state?.expected_at
+                  ? `due ${r.state.expected_at}`
+                  : ago(r.state?.ordered_at ?? null)}
+                {arrived && ' · arrived?'}
+                {late && ` · late ${lateBy}d`}
               </span>
             </li>
           )
