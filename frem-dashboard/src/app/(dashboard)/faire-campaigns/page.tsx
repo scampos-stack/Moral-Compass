@@ -4,8 +4,8 @@ import { Stat, Empty } from '@/components/stat'
 import { Shell, Section, Table, Row } from '@/components/shell'
 import { PasscodeForm, LockButton } from '../linkedin/passcode-form'
 import { CampaignForm } from './campaign-form'
-import { deleteFaireCampaign } from './actions'
-import { readRange, money0, num, type SearchParams } from '@/lib/dash'
+import Link from 'next/link'
+import { readRange, money0, num } from '@/lib/dash'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,9 +30,15 @@ type Campaign = {
 export default async function FaireCampaignsPage({
   searchParams,
 }: {
-  searchParams: SearchParams
+  searchParams: Promise<{
+    range?: string
+    from?: string
+    to?: string
+    edit?: string
+  }>
 }) {
   const { range, from, to } = await readRange(searchParams)
+  const editId = (await searchParams).edit
   const supabase = createReadClient()
   const unlocked = await isUnlocked()
 
@@ -46,6 +52,9 @@ export default async function FaireCampaignsPage({
   ])
 
   const campaigns = (data ?? []) as Campaign[]
+  const editing = editId
+    ? campaigns.find((c) => c.id === editId)
+    : undefined
 
   const creative = (creativeRes.data ?? []) as Array<{
     creative_type: string
@@ -160,7 +169,14 @@ export default async function FaireCampaignsPage({
         </Section>
       )}
 
-      {unlocked ? <CampaignForm /> : <PasscodeForm />}
+      {unlocked ? (
+        // Keyed by the row being edited so React remounts the inputs; without
+        // it, switching from one campaign to another keeps the first one's
+        // values in the fields.
+        <CampaignForm key={editId ?? 'new'} campaign={editing} />
+      ) : (
+        <PasscodeForm />
+      )}
 
       <Section title="Logged campaigns" aside="newest first">
         {campaigns.length === 0 ? (
@@ -192,15 +208,13 @@ export default async function FaireCampaignsPage({
                       </p>
                     </div>
                     {unlocked && (
-                      <form action={deleteFaireCampaign}>
-                        <input type="hidden" name="id" value={c.id} />
-                        <button
-                          type="submit"
-                          className="text-xs uppercase tracking-wider text-danger"
-                        >
-                          Delete
-                        </button>
-                      </form>
+                      <Link
+                        href={`/faire-campaigns?edit=${c.id}`}
+                        scroll
+                        className="shrink-0 border border-border px-2 py-1 text-xs uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground"
+                      >
+                        Edit
+                      </Link>
                     )}
                   </div>
 

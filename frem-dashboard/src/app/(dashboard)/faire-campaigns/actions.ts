@@ -51,43 +51,44 @@ export async function saveFaireCampaign(
   }
 
   const supabase = createReadClient()
-  const { error } = await supabase.from('faire_campaigns_manual').upsert(
-    {
-      name,
-      sent_on: sentOn,
-      status: String(formData.get('status') ?? '').trim() || null,
-      recipients: String(formData.get('recipients') ?? '').trim() || null,
-      attempted,
-      delivered,
-      open_rate_pct: toPct(formData.get('open_rate_pct')),
-      click_rate_pct: toPct(formData.get('click_rate_pct')),
-      orders_from_opens: toInt(formData.get('orders_from_opens')),
-      orders_from_clicks: toInt(formData.get('orders_from_clicks')),
-      volume_from_opens: toMoney(formData.get('volume_from_opens')),
-      volume_from_clicks: toMoney(formData.get('volume_from_clicks')),
-      creative_type:
-        String(formData.get('creative_type') ?? '').trim() || null,
-      notes: String(formData.get('notes') ?? '').trim() || null,
-      updated_at: new Date().toISOString(),
-    },
+
+  // Editing an existing entry updates that row by id. Without this an edit
+  // that corrected a typo in the name would land as a brand new campaign,
+  // because the natural key includes the name — leaving the wrong figures
+  // on the page beside the right ones.
+  const id = String(formData.get('id') ?? '').trim()
+
+  const values = {
+    name,
+    sent_on: sentOn,
+    status: String(formData.get('status') ?? '').trim() || null,
+    recipients: String(formData.get('recipients') ?? '').trim() || null,
+    attempted,
+    delivered,
+    open_rate_pct: toPct(formData.get('open_rate_pct')),
+    click_rate_pct: toPct(formData.get('click_rate_pct')),
+    orders_from_opens: toInt(formData.get('orders_from_opens')),
+    orders_from_clicks: toInt(formData.get('orders_from_clicks')),
+    volume_from_opens: toMoney(formData.get('volume_from_opens')),
+    volume_from_clicks: toMoney(formData.get('volume_from_clicks')),
+    creative_type: String(formData.get('creative_type') ?? '').trim() || null,
+    notes: String(formData.get('notes') ?? '').trim() || null,
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = id
+    ? await supabase.from('faire_campaigns_manual').update(values).eq('id', id)
     // Same campaign, same day, same audience is the same entry.
-    { onConflict: 'name,sent_on,recipients' }
-  )
+    : await supabase
+        .from('faire_campaigns_manual')
+        .upsert(values, { onConflict: 'name,sent_on,recipients' })
 
   if (error) return { ok: false, message: error.message }
 
   revalidatePath('/faire-campaigns')
   revalidatePath('/faire')
-  return { ok: true, message: `Saved “${name}”.` }
-}
-
-export async function deleteFaireCampaign(formData: FormData): Promise<void> {
-  if (!(await isUnlocked())) return
-  const id = String(formData.get('id') ?? '')
-  if (!id) return
-
-  const supabase = createReadClient()
-  await supabase.from('faire_campaigns_manual').delete().eq('id', id)
-  revalidatePath('/faire-campaigns')
-  revalidatePath('/faire')
+  return {
+    ok: true,
+    message: id ? `Updated “${name}”.` : `Saved “${name}”.`,
+  }
 }

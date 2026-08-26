@@ -195,6 +195,16 @@ export function Board({
   const showReorder = focus !== 'naming'
   const showNaming = focus !== 'reorder'
 
+  // Both panels must be readable in one screenful — the whole point is to see
+  // at a glance that there is a reorder list AND a cleanup backlog. So they
+  // sit side by side and each scrolls inside itself; the page itself does not
+  // grow with the row count. Expanding one gives it the full width and a
+  // taller window, for when a single list is the job.
+  const listMax =
+    focus === 'none'
+      ? 'max-h-[52vh] overflow-y-auto'
+      : 'max-h-[72vh] overflow-y-auto'
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -224,8 +234,9 @@ export function Board({
 
       {/* ── Reorder ──────────────────────────────────────────────────── */}
 
+      <div className={focus === 'none' ? 'grid items-start gap-6 xl:grid-cols-2' : 'space-y-6'}>
       {showReorder && (
-        <section className="space-y-3">
+        <section className="min-w-0 space-y-3">
           <PanelBar
             title="Reorder"
             count={visible.length}
@@ -271,7 +282,7 @@ export function Board({
               {q ? 'Nothing matches that search.' : 'Nothing here.'}
             </p>
           ) : (
-            <ul className="divide-y divide-border border-b border-border">
+            <ul className={`divide-y divide-border border-y border-border ${listMax}`}>
               {visible.slice(0, 150).map((r) => (
                 <ReorderRow
                   key={r.variant_id}
@@ -295,7 +306,7 @@ export function Board({
       {/* ── Naming ───────────────────────────────────────────────────── */}
 
       {showNaming && (
-        <section className="space-y-3">
+        <section className="min-w-0 space-y-3">
           <PanelBar
             title="Naming warnings"
             count={visibleNaming.length}
@@ -322,10 +333,12 @@ export function Board({
               {q ? 'No naming issue matches.' : 'Catalogue is clean.'}
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className={`overflow-x-auto border-y border-border ${listMax}`}>
               <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-y border-border text-xs uppercase tracking-wider text-muted">
+                {/* Sticky, because the panel scrolls inside itself now and a
+                    header that scrolls away leaves seven unlabelled columns. */}
+                <thead className="sticky top-0 z-10 bg-background">
+                  <tr className="border-b border-border text-xs uppercase tracking-wider text-muted">
                     <th className="w-8 py-2" />
                     <th className="py-2 pr-4 text-left font-normal">Where</th>
                     <th className="py-2 pr-4 text-left font-normal">Typed as</th>
@@ -355,6 +368,7 @@ export function Board({
           )}
         </section>
       )}
+      </div>
     </div>
   )
 }
