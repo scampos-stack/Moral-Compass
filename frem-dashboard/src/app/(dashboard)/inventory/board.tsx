@@ -9,6 +9,7 @@ import {
   releaseNaming,
   type ActionState,
 } from './actions'
+import { OrderLog } from './order-log'
 
 export type ReorderState = {
   status: 'ordered' | 'received'
@@ -153,7 +154,9 @@ export function Board({
       <div className="grid gap-8 lg:grid-cols-3">
         {/* ── Reorder, two thirds ─────────────────────────────────────── */}
         <div className="space-y-3 lg:col-span-2">
-          <div className="flex flex-wrap gap-1 border-b border-border">
+          <OrderLog rows={buckets.ordered} />
+
+        <div className="flex flex-wrap gap-1 border-b border-border">
             {TABS.map((t) => (
               <button
                 key={t.id}
