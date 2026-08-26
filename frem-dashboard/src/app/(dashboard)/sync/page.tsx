@@ -13,6 +13,7 @@ const LABEL: Record<string, string> = {
   shopify: 'Shopify orders',
   woodpecker: 'Woodpecker campaigns',
   gohighlevel: 'GoHighLevel pipelines',
+  shopify_inventory: 'Shopify inventory',
 }
 
 /** Hours since a timestamp, or null when it never ran. */
@@ -60,7 +61,12 @@ export default async function SyncPage({
     if (r.status === 'ok' && !latest.has(r.source)) latest.set(r.source, r)
   }
 
+  // Staleness is judged on the four sources every page reads. Inventory is
+  // deliberately left out: it is pulled on demand when someone is placing an
+  // order, so a month-old stock read is normal and must not raise an alarm
+  // about the revenue numbers.
   const sources = ['faire', 'shopify', 'woodpecker', 'gohighlevel']
+  const listed = [...sources, 'shopify_inventory']
   const stalest = Math.max(
     ...sources.map((s) => hoursSince(latest.get(s)?.finished_at) ?? 1e9)
   )
@@ -99,7 +105,7 @@ export default async function SyncPage({
             </>
           }
         >
-          {sources.map((s) => {
+          {listed.map((s) => {
             const run = latest.get(s)
             const f = freshness(hoursSince(run?.finished_at))
             return (

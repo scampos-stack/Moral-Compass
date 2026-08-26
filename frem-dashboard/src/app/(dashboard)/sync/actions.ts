@@ -6,6 +6,7 @@ import { syncFaireOrders } from '@/lib/faire/sync'
 import { syncWoodpecker } from '@/lib/woodpecker/sync'
 import { syncGoHighLevel } from '@/lib/ghl/sync'
 import { syncShopify } from '@/lib/shopify/sync'
+import { syncShopifyInventory } from '@/lib/shopify/inventory'
 
 export type SyncState = { ok: boolean; message: string } | null
 
@@ -18,6 +19,7 @@ function revalidateAll() {
     '/woodpecker',
     '/pipelines',
     '/social',
+    '/inventory',
     '/sync',
   ]) {
     revalidatePath(p)
@@ -77,6 +79,18 @@ export async function runSync(
       'Shopify',
       () => syncShopify({ maxPages: 20 }),
       (r) => `${r.directSales} direct, ${r.faireMirrors} mirrored`
+    )
+  }
+  // Inventory walks the whole 3,571-product catalogue, so it is excluded
+  // from 'all' — a routine refresh should not pay 15 extra API calls for
+  // data that changes far more slowly than orders do. Run it on its own.
+  if (source === 'inventory') {
+    await step(
+      'Inventory',
+      () => syncShopifyInventory(),
+      (r) =>
+        `${r.variants} variants · ${r.lowStock + r.oversold} to reorder · ` +
+        `${r.namingIssues + r.duplicateSkus} naming warnings`
     )
   }
   if (source === 'all' || source === 'woodpecker') {

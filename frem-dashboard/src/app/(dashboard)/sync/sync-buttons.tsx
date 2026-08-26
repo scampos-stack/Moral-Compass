@@ -9,6 +9,7 @@ const SOURCES = [
   { id: 'shopify', label: 'Shopify' },
   { id: 'woodpecker', label: 'Woodpecker' },
   { id: 'ghl', label: 'GoHighLevel' },
+  { id: 'inventory', label: 'Inventory' },
 ] as const
 
 export function SyncButtons() {

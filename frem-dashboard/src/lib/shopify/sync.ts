@@ -38,7 +38,7 @@ export type ShopifyResult = {
   error?: string
 }
 
-function config() {
+export function config() {
   const shop = process.env.SHOPIFY_SHOP
   const id = process.env.SHOPIFY_CLIENT_ID
   const secret = process.env.SHOPIFY_CLIENT_SECRET
@@ -50,7 +50,7 @@ function config() {
 }
 
 /** Exchanges client credentials for a short-lived access token. */
-async function getToken(): Promise<string> {
+export async function getToken(): Promise<string> {
   const { shop, id, secret } = config()
   const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
