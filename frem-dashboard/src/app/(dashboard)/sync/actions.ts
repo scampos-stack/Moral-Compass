@@ -19,7 +19,7 @@ function revalidateAll() {
     '/woodpecker',
     '/pipelines',
     '/social',
-    '/campaigns',
+    '/shopify/campaigns',
     '/inventory',
     '/sync',
   ]) {
