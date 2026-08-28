@@ -7,6 +7,7 @@ import { syncWoodpecker } from '@/lib/woodpecker/sync'
 import { syncGoHighLevel } from '@/lib/ghl/sync'
 import { syncShopify } from '@/lib/shopify/sync'
 import { syncShopifyInventory } from '@/lib/shopify/inventory'
+import { syncFaireItems } from '@/lib/faire/items'
 
 export type SyncState = { ok: boolean; message: string } | null
 
@@ -92,6 +93,15 @@ export async function runSync(
       (r) =>
         `${r.variants} variants · ${r.lowStock + r.oversold} to reorder · ` +
         `${r.namingIssues + r.duplicateSkus} naming warnings`
+    )
+  }
+  // Top-up only from the button. A full backfill is 234 sequential
+  // requests and belongs in the API route, not in something someone waits on.
+  if (source === 'faire_items') {
+    await step(
+      'Faire items',
+      () => syncFaireItems({ maxPages: 5 }),
+      (r) => `${r.items} items across ${r.orders} orders`
     )
   }
   if (source === 'all' || source === 'woodpecker') {

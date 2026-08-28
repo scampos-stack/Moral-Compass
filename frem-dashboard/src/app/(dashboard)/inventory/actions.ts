@@ -235,3 +235,88 @@ export async function namingItems(
   if (error) return []
   return (data ?? []) as NamingItem[]
 }
+
+/* ── Hiding one variant ──────────────────────────────────────────────── */
+
+/**
+ * Takes a single colour or size out of the alert list.
+ *
+ * Two kinds, because "discontinued" describes the wrong thing for the case
+ * this was built for: two of four colours in a summer style are empty and
+ * meant to stay that way until spring, while the other two still sell.
+ * Deactivating the product in Shopify would silence the two that work.
+ *
+ * A seasonal hide carries an end date and expires by itself. A hide with no
+ * end date would bury that colour permanently and nobody would notice it
+ * missing next May — the same failure as the noise it removes, only later.
+ */
+export async function hideVariant(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const who = await actor()
+  if (!who) return { ok: false, message: 'Enter the edit code to hide a line.' }
+
+  const variantId = Number(formData.get('variant_id'))
+  if (!Number.isFinite(variantId)) return { ok: false, message: 'Missing variant.' }
+
+  const kind = String(formData.get('kind') ?? '')
+  if (kind !== 'discontinued' && kind !== 'seasonal') {
+    return { ok: false, message: 'Pick discontinued or out of season.' }
+  }
+
+  const until = String(formData.get('until') ?? '').trim()
+  if (kind === 'seasonal') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+      return { ok: false, message: 'Out of season needs a return date.' }
+    }
+    // A date already past would hide nothing — the row would reappear on the
+    // next render and read as though the click did not register.
+    if (until < new Date().toISOString().slice(0, 10)) {
+      return { ok: false, message: 'That date has already passed.' }
+    }
+  }
+
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('variant_hidden').upsert(
+    {
+      variant_id: variantId,
+      kind,
+      until: kind === 'seasonal' ? until : null,
+      reason: String(formData.get('reason') ?? '').trim() || null,
+      actor: who,
+      created_at: new Date().toISOString(),
+    },
+    { onConflict: 'variant_id' }
+  )
+  if (error) return { ok: false, message: error.message }
+
+  refresh()
+  return {
+    ok: true,
+    message:
+      kind === 'seasonal' ? `Hidden until ${until}.` : 'Marked discontinued.',
+  }
+}
+
+/** Puts a hidden variant back in the list. */
+export async function unhideVariant(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  const who = await actor()
+  if (!who) return { ok: false, message: 'Enter the edit code first.' }
+
+  const variantId = Number(formData.get('variant_id'))
+  if (!Number.isFinite(variantId)) return { ok: false, message: 'Missing variant.' }
+
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('variant_hidden')
+    .delete()
+    .eq('variant_id', variantId)
+  if (error) return { ok: false, message: error.message }
+
+  refresh()
+  return { ok: true, message: 'Back in the list.' }
+}

@@ -10,6 +10,7 @@ const SOURCES = [
   { id: 'woodpecker', label: 'Woodpecker' },
   { id: 'ghl', label: 'GoHighLevel' },
   { id: 'inventory', label: 'Inventory' },
+  { id: 'faire_items', label: 'Faire items' },
 ] as const
 
 export function SyncButtons() {

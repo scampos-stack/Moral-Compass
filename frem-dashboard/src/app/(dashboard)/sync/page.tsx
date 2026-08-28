@@ -14,6 +14,7 @@ const LABEL: Record<string, string> = {
   woodpecker: 'Woodpecker campaigns',
   gohighlevel: 'GoHighLevel pipelines',
   shopify_inventory: 'Shopify inventory',
+  faire_items: 'Faire line items',
 }
 
 /** Hours since a timestamp, or null when it never ran. */
@@ -66,7 +67,7 @@ export default async function SyncPage({
   // order, so a month-old stock read is normal and must not raise an alarm
   // about the revenue numbers.
   const sources = ['faire', 'shopify', 'woodpecker', 'gohighlevel']
-  const listed = [...sources, 'shopify_inventory']
+  const listed = [...sources, 'shopify_inventory', 'faire_items']
   const stalest = Math.max(
     ...sources.map((s) => hoursSince(latest.get(s)?.finished_at) ?? 1e9)
   )

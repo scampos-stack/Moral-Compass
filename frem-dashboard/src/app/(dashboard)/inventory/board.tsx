@@ -5,6 +5,8 @@ import {
   markOrdered,
   markReceived,
   clearReorder,
+  hideVariant,
+  unhideVariant,
   type ActionState,
 } from './actions'
 import { OrderLog } from './order-log'
@@ -42,6 +44,12 @@ export type Row = {
   state: ReorderState | null
   /** Set when this variant's SKU is shared and a sibling still holds stock. */
   masked: { sku_total: number; sharing: number } | null
+  /** Set when this one colour or size has been taken out of the list. */
+  hidden: {
+    kind: 'discontinued' | 'seasonal'
+    until: string | null
+    actor: string
+  } | null
 }
 
 export type NamingRow = {
@@ -118,7 +126,11 @@ export function Board({
       // "Received but still low" deliberately returns to the open list. The
       // order was closed and the shelf is still empty, which is a fact the
       // buyer needs, not a closed ticket.
+      // A hidden line still appears if it has started selling again. Someone
+      // marked it dead; the shelf says otherwise, and that is worth seeing.
+      const hushed = r.hidden !== null && r.units_60d === 0
       if (r.state?.status === 'ordered') ordered.push(r)
+      else if (hushed) idle.push(r)
       else if (ACTIONABLE.has(r.severity)) open.push(r)
       else idle.push(r)
       if (r.masked) masked.push(r)
@@ -494,6 +506,14 @@ function ReorderRow({
     return d.toISOString().slice(0, 10)
   })
   const [po, setPo] = useState('')
+  const [hiding, setHiding] = useState(false)
+  // Defaults to next spring: the case this exists for is a summer colour put
+  // away in August, and a date already in the past would hide nothing.
+  const [until, setUntil] = useState(() => {
+    const d = new Date()
+    d.setMonth(d.getMonth() + 6)
+    return d.toISOString().slice(0, 10)
+  })
 
   const fd = (extra: Record<string, string> = {}) => {
     const f = new FormData()
@@ -540,6 +560,21 @@ function ReorderRow({
               Do not reorder yet — this SKU is on {r.masked.sharing} variants
               holding {num(r.masked.sku_total)} units between them. The shelf
               may be full under a different row.
+            </p>
+          )}
+
+          {r.hidden && (
+            <p className="mt-1 text-xs text-muted">
+              {r.hidden.kind === 'seasonal'
+                ? `Out of season until ${r.hidden.until}`
+                : 'Discontinued'}{' '}
+              · {r.hidden.actor.split('@')[0]}
+              {r.units_60d > 0 && (
+                <span className="text-danger">
+                  {' '}
+                  · but it has sold {num(r.units_60d)} since
+                </span>
+              )}
             </p>
           )}
 
@@ -664,8 +699,71 @@ function ReorderRow({
               </button>
             </>
           )}
+
+          {/* Hiding is per variant, not per product: the case this solves is
+              two of four colours being empty on purpose while the other two
+              still sell, which Shopify cannot express without killing the
+              whole listing. */}
+          {unlocked &&
+            (r.hidden ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => run(unhideVariant, fd())}
+                className="px-2 py-1.5 text-xs text-muted transition-colors hover:text-foreground disabled:opacity-40"
+              >
+                Unhide
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setHiding((v) => !v)}
+                aria-expanded={hiding}
+                className="px-2 py-1.5 text-xs text-muted transition-colors hover:text-foreground"
+              >
+                Hide
+              </button>
+            ))}
         </div>
       </div>
+
+      {hiding && unlocked && !r.hidden && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-l-2 border-border pl-3 text-xs">
+          <span className="text-muted">Take this colour out of the list:</span>
+          <input
+            type="date"
+            value={until}
+            onChange={(e) => setUntil(e.target.value)}
+            aria-label="Return date"
+            className="numeric border border-border bg-transparent px-2 py-1 text-xs outline-none focus:border-foreground"
+          />
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              run(hideVariant, fd({ kind: 'seasonal', until }))
+              setHiding(false)
+            }}
+            className="border border-border px-2 py-1 uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground disabled:opacity-40"
+          >
+            Out of season
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              run(hideVariant, fd({ kind: 'discontinued' }))
+              setHiding(false)
+            }}
+            className="border border-border px-2 py-1 uppercase tracking-wider text-muted transition-colors hover:border-foreground hover:text-foreground disabled:opacity-40"
+          >
+            Discontinued
+          </button>
+          <span className="text-muted">
+            Either way it comes back if it starts selling again.
+          </span>
+        </div>
+      )}
     </li>
   )
 }
